@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+:root {
+  --background: #19110a;
+  --foreground: #fff2dc;
+  --brand-gold: #f59f1a;
+  --brand-ink: #19110a;
+  --brand-cream: #fff2dc;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-cream: var(--brand-cream);
+  --font-sans: var(--font-manrope);
+  --font-mono: var(--font-dm-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 8% 8%, #40220f 0%, #19110a 45%, #120b06 100%);
+  color: var(--foreground);
+  font-family: var(--font-manrope), sans-serif;
+}
+
+.brand-grid {
+  background-image:
+    linear-gradient(to right, rgba(245, 159, 26, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(245, 159, 26, 0.08) 1px, transparent 1px);
+  background-size: 36px 36px;
+}

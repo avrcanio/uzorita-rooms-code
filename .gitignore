@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+
+# Local secrets
+backend/.env
+frontend/.env
+
+# Runtime/generated artifacts
+backend/app/id_docs/
+backend/app/db.sqlite3

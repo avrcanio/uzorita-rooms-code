@@ -1,0 +1,22 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uzorita-frontend
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.rooms-frontend.rule=Host(`rooms.uzorita.hr`)"
+      - "traefik.http.routers.rooms-frontend.entrypoints=websecure"
+      - "traefik.http.routers.rooms-frontend.tls=true"
+      - "traefik.http.routers.rooms-frontend.tls.certresolver=le"
+      - "traefik.http.routers.rooms-frontend.priority=10"
+      - "traefik.http.services.rooms-frontend.loadbalancer.server.port=3000"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
