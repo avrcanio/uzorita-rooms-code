@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@microblink/blinkid": "^7.6.3",
+    "flag-icons": "^7.5.0",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"

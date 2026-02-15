@@ -20,6 +20,8 @@ from django.views.generic.base import RedirectView
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 from .health import health
+from django.conf import settings
+from django.conf.urls.static import static
 
 admin.site.site_header = "Uzorita administracija"
 admin.site.site_title = "Uzorita administracija"
@@ -35,5 +37,9 @@ urlpatterns = [
     path("api/redoc/", SpectacularRedocView.as_view(url_name="api-schema"), name="api-redoc"),
     path("api/auth/", include("config.auth_urls")),
     path("api/reception/", include("reception.api_urls")),
+    path("api/rooms/", include("rooms.api_urls")),
     path("reception/", include("reception.urls")),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

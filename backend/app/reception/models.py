@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.exceptions import ValidationError
 
 
 class ReservationStatus(models.TextChoices):
@@ -11,6 +12,20 @@ class ReservationStatus(models.TextChoices):
 class Reservation(models.Model):
     external_id = models.CharField(max_length=128, unique=True)
     room_name = models.CharField(max_length=128)
+    room_type = models.ForeignKey(
+        "rooms.RoomType",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reservations",
+    )
+    room = models.ForeignKey(
+        "rooms.Room",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reservations",
+    )
     check_in_date = models.DateField()
     check_out_date = models.DateField()
     status = models.CharField(
@@ -31,6 +46,42 @@ class Reservation(models.Model):
     def __str__(self) -> str:
         return f"{self.external_id} ({self.room_name})"
 
+    def clean(self):
+        super().clean()
+
+        if self.check_in_date and self.check_out_date and self.check_in_date >= self.check_out_date:
+            raise ValidationError({"check_out_date": "Check-out date must be after check-in date."})
+
+        if self.status == ReservationStatus.CANCELED:
+            return
+
+        if self.room_id and self.room_type_id:
+            # Keep data consistent when both are provided.
+            if self.room.room_type_id != self.room_type_id:
+                raise ValidationError({"room": "Selected room does not match selected room type."})
+
+        if not self.room_id or not self.check_in_date or not self.check_out_date:
+            return
+
+        # Prevent overlapping reservations for the same physical room.
+        conflict = (
+            Reservation.objects.filter(room_id=self.room_id)
+            .exclude(pk=self.pk)
+            .exclude(status=ReservationStatus.CANCELED)
+            .filter(check_in_date__lt=self.check_out_date, check_out_date__gt=self.check_in_date)
+            .order_by("check_in_date", "id")
+            .first()
+        )
+        if conflict:
+            raise ValidationError(
+                {
+                    "room": (
+                        f"Room {self.room} is already booked for an overlapping period "
+                        f"({conflict.check_in_date} -> {conflict.check_out_date}, external_id={conflict.external_id})."
+                    )
+                }
+            )
+
 
 class Guest(models.Model):
     reservation = models.ForeignKey(
@@ -40,6 +91,7 @@ class Guest(models.Model):
     )
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
+    email = models.EmailField(blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     document_number = models.CharField(max_length=64, blank=True)
     nationality = models.CharField(max_length=2, blank=True)

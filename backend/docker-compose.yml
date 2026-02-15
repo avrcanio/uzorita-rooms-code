@@ -18,3 +18,24 @@ services:
     volumes:
       - ./app:/app
     network_mode: host
+
+  booking-worker:
+    image: python:3.12-slim
+    container_name: uzorita-booking-worker
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      python manage.py migrate &&
+      python manage.py run_booking_pipeline --interval 60 --mark-seen"
+    env_file:
+      - .env
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_ALLOWED_HOSTS: "*"
+      DB_ENGINE: django.db.backends.postgresql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+    volumes:
+      - ./app:/app
+    network_mode: host
+    restart: unless-stopped

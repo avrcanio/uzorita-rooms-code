@@ -11,6 +11,7 @@ type Guest = {
   reservation: number;
   first_name: string;
   last_name: string;
+  email?: string;
   date_of_birth: string | null;
   sex?: string;
   address?: string;
@@ -50,6 +51,7 @@ type MeResponse = {
 type WizardForm = {
   first_name: string;
   last_name: string;
+  email: string;
   date_of_birth: string;
   nationality: string;
   document_number: string;
@@ -103,6 +105,7 @@ export default function GuestDetailsPage() {
   const [form, setForm] = useState<WizardForm>({
     first_name: "",
     last_name: "",
+    email: "",
     date_of_birth: "",
     nationality: "",
     document_number: "",
@@ -203,6 +206,7 @@ export default function GuestDetailsPage() {
         setForm({
           first_name: guestData.first_name || "",
           last_name: guestData.last_name || "",
+          email: guestData.email || "",
           date_of_birth: guestData.date_of_birth || "",
           nationality: guestData.nationality || "",
           document_number: guestData.document_number || "",
@@ -287,6 +291,7 @@ export default function GuestDetailsPage() {
         },
         body: JSON.stringify({
           ...payload,
+          email: payload.email.trim(),
           date_of_birth: payload.date_of_birth || null,
           date_of_issue: payload.date_of_issue || null,
           date_of_expiry: payload.date_of_expiry || null,
@@ -311,6 +316,7 @@ export default function GuestDetailsPage() {
       setForm({
         first_name: updatedGuest.first_name || "",
         last_name: updatedGuest.last_name || "",
+        email: updatedGuest.email || "",
         date_of_birth: updatedGuest.date_of_birth || "",
         nationality: updatedGuest.nationality || "",
         document_number: updatedGuest.document_number || "",
@@ -345,6 +351,7 @@ export default function GuestDetailsPage() {
     await saveGuestData({
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
+      email: form.email.trim(),
       date_of_birth: form.date_of_birth || "",
       nationality: form.nationality.trim().toUpperCase(),
       document_number: form.document_number.trim(),
@@ -452,6 +459,14 @@ export default function GuestDetailsPage() {
                   onChange={(event) => setForm((prev) => ({ ...prev, last_name: event.target.value }))}
                   placeholder="Prezime"
                   className="rounded-xl border border-brand-gold/30 bg-black/40 px-4 py-3 text-sm outline-none focus:border-brand-gold"
+                />
+                <input
+                  value={form.email}
+                  type="email"
+                  inputMode="email"
+                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="Email"
+                  className="rounded-xl border border-brand-gold/30 bg-black/40 px-4 py-3 text-sm outline-none focus:border-brand-gold sm:col-span-2"
                 />
                 <input
                   value={form.date_of_birth}

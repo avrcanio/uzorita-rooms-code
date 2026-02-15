@@ -26,6 +26,7 @@ class GuestAdmin(admin.ModelAdmin):
         "reservation",
         "first_name",
         "last_name",
+        "email",
         "is_primary",
         "nationality",
         "document_number",
@@ -36,6 +37,7 @@ class GuestAdmin(admin.ModelAdmin):
     search_fields = (
         "first_name",
         "last_name",
+        "email",
         "document_number",
         "personal_id_number",
         "reservation__external_id",

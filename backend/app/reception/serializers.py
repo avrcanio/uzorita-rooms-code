@@ -10,6 +10,7 @@ class GuestLiteSerializer(serializers.ModelSerializer):
             "id",
             "first_name",
             "last_name",
+            "email",
             "is_primary",
             "nationality",
             "document_number",
@@ -21,6 +22,7 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
     guests = GuestLiteSerializer(many=True, read_only=True)
     guests_count = serializers.IntegerField(read_only=True)
     primary_guest_name = serializers.SerializerMethodField()
+    primary_guest_nationality_iso2 = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -28,6 +30,8 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
             "id",
             "external_id",
             "room_name",
+            "room_type",
+            "room",
             "check_in_date",
             "check_out_date",
             "status",
@@ -35,6 +39,7 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
             "currency",
             "guests_count",
             "primary_guest_name",
+            "primary_guest_nationality_iso2",
             "guests",
         )
 
@@ -43,6 +48,12 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
         if primary_guest:
             return f"{primary_guest.first_name} {primary_guest.last_name}".strip()
         return ""
+
+    def get_primary_guest_nationality_iso2(self, obj):
+        primary_guest = next((g for g in obj.guests.all() if g.is_primary), None)
+        if not primary_guest:
+            return ""
+        return (primary_guest.nationality or "").strip().upper()
 
 
 class GuestDetailSerializer(serializers.ModelSerializer):
@@ -53,6 +64,7 @@ class GuestDetailSerializer(serializers.ModelSerializer):
             "reservation",
             "first_name",
             "last_name",
+            "email",
             "date_of_birth",
             "document_number",
             "nationality",

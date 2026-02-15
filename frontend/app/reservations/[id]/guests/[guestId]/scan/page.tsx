@@ -64,6 +64,7 @@ export default function GuestScanPage() {
 
   const [scanLoading, setScanLoading] = useState(false);
   const [scanActive, setScanActive] = useState(false);
+  const [scanOverlayOpen, setScanOverlayOpen] = useState(false);
   const [scanStatus, setScanStatus] = useState("");
   const [scanError, setScanError] = useState("");
 
@@ -81,7 +82,14 @@ export default function GuestScanPage() {
     } catch {}
     scannerInstanceRef.current = null;
     setScanActive(false);
+    setScanOverlayOpen(false);
   }, []);
+
+  const waitForNextFrame = () =>
+    new Promise<void>((resolve) => {
+      // Make sure React commits DOM changes (overlay + scanner host) before initializing the SDK.
+      setTimeout(() => requestAnimationFrame(() => resolve()), 0);
+    });
 
   useEffect(() => {
     return () => {
@@ -269,6 +277,9 @@ export default function GuestScanPage() {
 
     try {
       await cleanupScanner();
+      setScanOverlayOpen(true);
+      await waitForNextFrame();
+
       const { createBlinkId } = await import("@microblink/blinkid");
 
       const licenseKey = (process.env.NEXT_PUBLIC_MICROBLINK_LICENSE_KEY || "").trim();
@@ -319,13 +330,14 @@ export default function GuestScanPage() {
     } catch (errorScan) {
       setScanError(errorScan instanceof Error ? errorScan.message : "Greška prilikom skeniranja.");
       setScanStatus("");
+      setScanOverlayOpen(false);
     } finally {
       setScanLoading(false);
     }
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-brand-ink pb-24 text-brand-cream">
+    <main className="relative min-h-screen min-h-[100dvh] overflow-x-hidden bg-brand-ink pb-24 text-brand-cream">
       <div className="pointer-events-none absolute inset-0 brand-grid opacity-30" />
       <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-8">
         <div className="flex flex-wrap items-center gap-2">
@@ -372,20 +384,50 @@ export default function GuestScanPage() {
                   </button>
                 </div>
 
-                <div className={`mt-3 ${scanActive ? "block" : "hidden"}`}>
-                  <div
-                    ref={scannerHostRef}
-                    className="w-full overflow-hidden rounded-lg border border-brand-gold/30 bg-black"
-                  />
-                </div>
-
                 {scanStatus && <p className="mt-3 text-sm text-brand-gold">{scanStatus}</p>}
                 {scanError && <p className="mt-3 text-sm text-red-300">{scanError}</p>}
+                <p className="mt-3 text-xs text-brand-cream/70">
+                  Na iPhoneu skener se otvara preko cijelog ekrana (da se ne reže gumb za pokretanje).
+                </p>
+
               </div>
             </>
           )}
         </section>
       </div>
+
+      {scanOverlayOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/95 text-brand-cream"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="flex h-[100dvh] flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+            <div className="flex items-center justify-between gap-3 border-b border-brand-gold/20 bg-black/70 px-4 py-3 backdrop-blur-sm">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">
+                  {guest ? `${guest.first_name} ${guest.last_name}` : `Gost #${guestId}`}
+                </p>
+                <p className="truncate text-xs text-brand-cream/70">Microblink skener</p>
+              </div>
+              <button
+                type="button"
+                onClick={cleanupScanner}
+                className="shrink-0 rounded-xl border border-brand-gold/40 bg-black/40 px-3 py-2 text-sm"
+              >
+                Zatvori
+              </button>
+            </div>
+
+            <div className="flex-1">
+              <div
+                ref={scannerHostRef}
+                className="h-full w-full overflow-hidden bg-black"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

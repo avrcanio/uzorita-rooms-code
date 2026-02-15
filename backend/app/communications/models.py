@@ -18,6 +18,8 @@ class InboundEmail(models.Model):
     body_text = models.TextField(blank=True)
     body_html = models.TextField(blank=True)
     raw_headers = models.TextField(blank=True)
+    # Normalized parser output (Booking, etc.). Kept for audit/debugging.
+    parsed_payload = models.JSONField(default=dict, blank=True)
     parse_status = models.CharField(
         max_length=16,
         choices=ParseStatus.choices,
