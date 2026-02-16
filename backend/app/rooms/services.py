@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
+from decimal import Decimal
 
-from rooms.models import RoomType
+from rooms.models import Room, RoomType, RoomTypePricingPlan
 
 
 def preferred_room_code_from_parsed_room_name(text: str | None) -> str | None:
@@ -56,3 +58,64 @@ def canonical_room_info(*, parsed_room_name: str | None, fallback_room_name: str
     if rt:
         return (rt, rt.get_i18n_text("name_i18n", "en") or rt.code)
     return (None, (parsed_room_name or fallback_room_name or "Unknown").strip() or "Unknown")
+
+
+def resolve_active_pricing_plan(room: Room, target_date: date) -> RoomTypePricingPlan | None:
+    plans = RoomTypePricingPlan.objects.filter(room=room, is_active=True).order_by("-is_default", "code")
+    for plan in plans:
+        if plan.valid_from and target_date < plan.valid_from:
+            continue
+        if plan.valid_to and target_date > plan.valid_to:
+            continue
+        return plan
+    return None
+
+
+def resolve_price_for_date(
+    room: Room,
+    target_date: date,
+    adults: int | None = None,
+    children: int | None = None,
+) -> Decimal | None:
+    plan = resolve_active_pricing_plan(room, target_date)
+    if not plan:
+        return None
+
+    matched_rules = [
+        r
+        for r in plan.rules.filter(is_active=True).order_by("sort_order", "id")
+        if r.matches_date(target_date) and r.matches_occupancy_with_children(adults=adults, children=children)
+    ]
+    if matched_rules:
+        # Prefer more specific occupancy rule (adults/children set) over generic one.
+        matched_rules.sort(
+            key=lambda r: (
+                r.priority,
+                (1 if r.adults_count is not None else 0) + (1 if r.children_count is not None else 0),
+                r.sort_order,
+                -r.id,
+            ),
+            reverse=True,
+        )
+        return matched_rules[0].price_per_night
+    return plan.base_price_per_night
+
+
+def accommodation_total_for_period(
+    room: Room,
+    checkin: date,
+    checkout: date,
+    adults: int | None = None,
+    children: int | None = None,
+) -> Decimal | None:
+    if checkout <= checkin:
+        return Decimal("0.00")
+    total = Decimal("0.00")
+    day = checkin
+    while day < checkout:
+        daily_price = resolve_price_for_date(room, day, adults=adults, children=children)
+        if daily_price is None:
+            return None
+        total += daily_price
+        day += timedelta(days=1)
+    return total

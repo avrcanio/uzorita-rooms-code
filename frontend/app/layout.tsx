@@ -14,8 +14,8 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Uzorita Rooms",
-  description: "Recepcijski sustav za Uzorita Rooms",
+  title: "Uzorita Luxury Rooms",
+  description: "Recepcijski sustav za Uzorita Luxury Rooms",
   icons: {
     icon: "/kapa.png",
     shortcut: "/kapa.png",

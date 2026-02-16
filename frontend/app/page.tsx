@@ -37,6 +37,10 @@ type Room = {
   is_active: boolean;
 };
 
+type PublicProperty = {
+  whatsapp_phone: string;
+};
+
 const statusOptions: Array<{ value: string; label: string }> = [
   { value: "", label: "Svi statusi" },
   { value: "expected", label: "Očekuje dolazak" },
@@ -112,6 +116,7 @@ export default function Home() {
 
   const [me, setMe] = useState<MeResponse | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [whatsappPhone, setWhatsappPhone] = useState<string>("");
 
   const [rooms, setRooms] = useState<Room[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -156,6 +161,32 @@ export default function Home() {
   }, [router]);
 
   const lang = useMemo(() => (typeof document === "undefined" ? "en" : document.documentElement.lang || "en"), []);
+
+  const whatsappUrl = useMemo(() => {
+    const digits = (whatsappPhone || "").replace(/[^\d]/g, "");
+    return digits ? `https://wa.me/${digits}` : "";
+  }, [whatsappPhone]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadProperty = async () => {
+      try {
+        const response = await fetch(`/api/public/property/?lang=${encodeURIComponent(lang)}`, {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as PublicProperty;
+        setWhatsappPhone((data.whatsapp_phone || "").trim());
+      } catch {
+        // Non-fatal.
+      }
+    };
+
+    loadProperty();
+    return () => controller.abort();
+  }, [lang]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -365,11 +396,38 @@ export default function Home() {
                 />
               </div>
               <div>
-                <p className="font-mono text-xs uppercase tracking-[0.24em] text-brand-gold">Uzorita Rooms</p>
+                <p className="font-mono text-xs uppercase tracking-[0.24em] text-brand-gold">Uzorita Luxury Rooms</p>
                 <h1 className="text-2xl font-semibold leading-tight sm:text-3xl">Recepcija i timeline</h1>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {whatsappUrl ? (
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 rounded-full border border-brand-gold/40 bg-black/40 px-4 py-2 text-sm hover:bg-brand-gold/20"
+                  title={whatsappPhone}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M20.5 11.7c0 4.7-3.8 8.5-8.5 8.5-1.4 0-2.8-.3-4-.9L3.5 20.5l1.2-4.2c-.7-1.2-1.1-2.7-1.1-4.3 0-4.7 3.8-8.5 8.5-8.5s8.4 3.8 8.4 8.2Z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M9.4 8.6c.3-.6.6-.7 1.1-.7h.6c.2 0 .4.1.5.4l.7 1.7c.1.2 0 .4-.1.6l-.4.5c-.1.2-.1.4 0 .6.4.9 1.2 1.7 2.1 2.1.2.1.4.1.6 0l.5-.4c.2-.1.4-.2.6-.1l1.7.7c.3.1.4.3.4.5v.6c0 .5-.1.8-.7 1.1-.4.2-1 .3-1.4.2-2.2-.5-4.8-3.1-5.3-5.3-.1-.4 0-1 .2-1.4Z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>WhatsApp</span>
+                </a>
+              ) : null}
               <div className="rounded-full border border-brand-gold/40 bg-brand-gold/15 px-4 py-2 text-sm">
                 {me ? `Korisnik: ${me.username}` : "Provjera prijave..."}
               </div>

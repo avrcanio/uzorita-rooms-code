@@ -1,0 +1,25 @@
+services:
+  booking-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uzorita-booking-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.booking-web.rule=Host(`booking.uzorita.hr`)"
+      - "traefik.http.routers.booking-web.entrypoints=websecure"
+      - "traefik.http.routers.booking-web.tls=true"
+      - "traefik.http.routers.booking-web.tls.certresolver=le"
+      - "traefik.http.routers.booking-web.priority=10"
+      - "traefik.http.services.booking-web.loadbalancer.server.port=3000"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+

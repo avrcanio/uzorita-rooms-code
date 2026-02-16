@@ -38,6 +38,9 @@ urlpatterns = [
     path("api/auth/", include("config.auth_urls")),
     path("api/reception/", include("reception.api_urls")),
     path("api/rooms/", include("rooms.api_urls")),
+    path("api/public/", include("rooms.public_booking_urls")),
+    path("api/public/rooms/", include("rooms.public_urls")),
+    path("api/public/property/", include("rooms.public_property_urls")),
     path("reception/", include("reception.urls")),
 ]
 

@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #fbf6ee;
+  --ink: #181615;
+  --muted: rgba(24, 22, 21, 0.72);
+  --accent: #c06b2b;
+  --accent-2: #2e7a78;
+}
+
+@theme inline {
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --font-sans: var(--font-manrope);
+  --font-serif: var(--font-fraunces);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(192, 107, 43, 0.12), transparent 55%),
+    radial-gradient(circle at 80% 30%, rgba(46, 122, 120, 0.10), transparent 60%),
+    linear-gradient(to bottom, #fbf6ee 0%, #f7efe3 40%, #fbf6ee 100%);
+  color: var(--ink);
+  font-family: var(--font-manrope), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.container {
+  width: min(1040px, calc(100% - 2rem));
+  margin: 0 auto;
+}
+
+.card {
+  border: 1px solid rgba(24, 22, 21, 0.12);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(10px);
+  border-radius: 18px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 14px;
+  padding: 0.85rem 1.05rem;
+  font-weight: 700;
+  border: 1px solid rgba(24, 22, 21, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+
+.btn-primary {
+  border-color: rgba(192, 107, 43, 0.35);
+  background: linear-gradient(180deg, rgba(192, 107, 43, 0.92), rgba(154, 78, 31, 0.95));
+  color: #fffaf2;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.input {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(24, 22, 21, 0.16);
+  padding: 0.85rem 0.9rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.input:focus {
+  outline: 2px solid rgba(192, 107, 43, 0.28);
+  outline-offset: 2px;
+}
+
