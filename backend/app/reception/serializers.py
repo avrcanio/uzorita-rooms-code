@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Guest, OcrScanLog, Reservation
+from .models import Guest, Reservation
 
 
 class GuestLiteSerializer(serializers.ModelSerializer):
@@ -44,13 +44,19 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
         )
 
     def get_primary_guest_name(self, obj):
-        primary_guest = next((g for g in obj.guests.all() if g.is_primary), None)
+        primary_guest = next(
+            (g for g in obj.guests.all() if g.is_primary),
+            None,
+        )
         if primary_guest:
             return f"{primary_guest.first_name} {primary_guest.last_name}".strip()
         return ""
 
     def get_primary_guest_nationality_iso2(self, obj):
-        primary_guest = next((g for g in obj.guests.all() if g.is_primary), None)
+        primary_guest = next(
+            (g for g in obj.guests.all() if g.is_primary),
+            None,
+        )
         if not primary_guest:
             return ""
         return (primary_guest.nationality or "").strip().upper()
@@ -90,32 +96,12 @@ class GuestDetailSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         if validated_data.get("is_primary", False):
-            Guest.objects.filter(reservation=instance.reservation).exclude(pk=instance.pk).update(
-                is_primary=False
+            (
+                Guest.objects.filter(reservation=instance.reservation)
+                .exclude(pk=instance.pk)
+                .update(is_primary=False)
             )
         return super().update(instance, validated_data)
 
 
-class OcrScanLogSerializer(serializers.ModelSerializer):
-    reservation_external_id = serializers.CharField(source="reservation.external_id", read_only=True)
-    guest_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = OcrScanLog
-        fields = (
-            "id",
-            "provider",
-            "status",
-            "duration_ms",
-            "reservation",
-            "reservation_external_id",
-            "guest",
-            "guest_name",
-            "error_message",
-            "suggested_fields",
-            "corrected_fields",
-            "created_at",
-        )
-
-    def get_guest_name(self, obj):
-        return f"{obj.guest.first_name} {obj.guest.last_name}".strip()
+# Legacy OcrScanLogSerializer removed (old web scanning flow).

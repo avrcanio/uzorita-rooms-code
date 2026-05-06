@@ -1,12 +1,10 @@
 from django.urls import path
 
 from .views import (
-    OcrScanLogListView,
-    OcrScanStatsView,
+    DocumentScanIngestView,
     ReceptionHealthView,
     ReservationDetailView,
     ReservationGuestDetailView,
-    ReservationGuestOcrView,
     ReservationTimelineListView,
 )
 
@@ -20,10 +18,8 @@ urlpatterns = [
         name="api-reservation-guest-detail",
     ),
     path(
-        "reservations/<int:reservation_id>/guests/<int:guest_id>/ocr/",
-        ReservationGuestOcrView.as_view(),
-        name="api-reservation-guest-ocr",
+        "reservations/<int:reservation_id>/guests/<int:guest_id>/document-scan/",
+        DocumentScanIngestView.as_view(),
+        name="api-reservation-guest-document-scan",
     ),
-    path("ocr/logs/", OcrScanLogListView.as_view(), name="api-ocr-logs"),
-    path("ocr/stats/", OcrScanStatsView.as_view(), name="api-ocr-stats"),
 ]

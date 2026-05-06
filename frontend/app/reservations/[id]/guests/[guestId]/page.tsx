@@ -438,14 +438,9 @@ export default function GuestDetailsPage() {
               <p className="mt-1 text-sm text-brand-cream/70">
                 {reservation ? `${reservation.external_id} • ${reservation.room_name}` : `Rezervacija #${reservationId}`}
               </p>
-              <div className="mt-3">
-                <Link
-                  href={`/reservations/${reservationId}/guests/${guestId}/scan`}
-                  className="inline-flex items-center rounded-xl border border-brand-gold/40 bg-brand-gold/20 px-4 py-2 text-sm font-medium hover:bg-brand-gold/30"
-                >
-                  Skeniraj dokument
-                </Link>
-              </div>
+              <p className="mt-3 text-sm text-brand-cream/70">
+                Skeniranje dokumenata je prebačeno u mobilnu (Flutter) aplikaciju.
+              </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <input

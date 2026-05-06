@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Guest, IDDocument, OcrScanLog, Reservation
+from .models import DocumentScanLog, Guest, IDDocument, Reservation
 
 
 @admin.register(Reservation)
@@ -51,13 +51,22 @@ class IDDocumentAdmin(admin.ModelAdmin):
     search_fields = ("guest__first_name", "guest__last_name", "image_path")
 
 
-@admin.register(OcrScanLog)
-class OcrScanLogAdmin(admin.ModelAdmin):
-    list_display = ("id", "provider", "status", "reservation", "guest", "duration_ms", "created_at")
-    list_filter = ("provider", "status", "created_at")
+@admin.register(DocumentScanLog)
+class DocumentScanLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "method",
+        "status",
+        "reservation",
+        "guest",
+        "duration_ms",
+        "created_at",
+    )
+    list_filter = ("status", "method", "created_at")
     search_fields = (
         "reservation__external_id",
         "guest__first_name",
         "guest__last_name",
         "error_message",
+        "device_id",
     )

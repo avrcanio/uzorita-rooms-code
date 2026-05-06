@@ -138,6 +138,8 @@ class IDDocument(models.Model):
         related_name="id_documents",
     )
     image_path = models.CharField(max_length=500)
+    face_photo = models.ImageField(upload_to="id_documents/faces/", null=True, blank=True)
+    signature_photo = models.ImageField(upload_to="id_documents/signatures/", null=True, blank=True)
     extracted_payload = models.JSONField(default=dict, blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
     verified_by = models.ForeignKey(
@@ -159,28 +161,26 @@ class IDDocument(models.Model):
         return f"IDDocument #{self.id} for guest {self.guest_id}"
 
 
-class OcrProvider(models.TextChoices):
-    MICROBLINK = "microblink", "Microblink"
-
-
-class OcrScanStatus(models.TextChoices):
+class DocumentScanStatus(models.TextChoices):
     OK = "ok", "Uspjesno"
     FAILED = "failed", "Neuspjesno"
 
 
-class OcrScanLog(models.Model):
+class DocumentScanLog(models.Model):
     reservation = models.ForeignKey(
         Reservation,
         on_delete=models.CASCADE,
-        related_name="ocr_scan_logs",
+        related_name="document_scan_logs",
     )
     guest = models.ForeignKey(
         Guest,
         on_delete=models.CASCADE,
-        related_name="ocr_scan_logs",
+        related_name="document_scan_logs",
     )
-    provider = models.CharField(max_length=32, choices=OcrProvider.choices)
-    status = models.CharField(max_length=16, choices=OcrScanStatus.choices)
+    status = models.CharField(max_length=16, choices=DocumentScanStatus.choices)
+    method = models.CharField(max_length=8, blank=True, default="")
+    device_id = models.CharField(max_length=128, blank=True, default="")
+    scanned_at = models.DateTimeField(null=True, blank=True)
     duration_ms = models.PositiveIntegerField(null=True, blank=True)
     raw_payload = models.JSONField(default=dict, blank=True)
     suggested_fields = models.JSONField(default=dict, blank=True)
@@ -191,14 +191,14 @@ class OcrScanLog(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="ocr_scan_logs",
+        related_name="document_scan_logs",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at", "-id"]
-        verbose_name = "OCR scan log"
-        verbose_name_plural = "OCR scan logs"
+        verbose_name = "Document scan log"
+        verbose_name_plural = "Document scan logs"
 
     def __str__(self) -> str:
-        return f"OCR {self.provider} {self.status} #{self.id}"
+        return f"Scan {self.method or '?'} {self.status} #{self.id}"
