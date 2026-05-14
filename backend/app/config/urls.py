@@ -36,6 +36,7 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="api-schema"), name="api-docs"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="api-schema"), name="api-redoc"),
     path("api/auth/", include("config.auth_urls")),
+    path("api/v1/", include("reception.v1_urls")),
     path("api/reception/", include("reception.api_urls")),
     path("api/rooms/", include("rooms.api_urls")),
     path("api/public/", include("rooms.public_booking_urls")),

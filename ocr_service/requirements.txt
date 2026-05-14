@@ -1,0 +1,15 @@
+# FastAPI stack
+fastapi>=0.109,<1
+uvicorn[standard]>=0.27,<1
+pydantic>=2,<3
+python-multipart>=0.0.9
+
+# NumPy 2.x breaks opencv-contrib-python 4.6.x wheels pulled in by paddleocr — keep ABI aligned.
+numpy>=1.21,<2
+
+# Paddle: install CPU wheel first; paddlepaddle-tiny is obsolete / not viable for Python 3.10 — use full paddlepaddle CPU.
+paddlepaddle==2.6.2
+paddleocr==2.7.3
+
+# Match paddleocr's opencv pin (<=4.6.0.66); do not float to 4.13+ or pip pulls NumPy 2 and cv2 fails to import.
+opencv-python-headless==4.6.0.66

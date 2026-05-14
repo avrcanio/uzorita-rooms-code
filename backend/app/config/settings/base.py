@@ -134,3 +134,12 @@ EMAIL_HOST_PASSWORD = env("SMTP_PASSWORD", "")
 EMAIL_USE_SSL = env_bool("SMTP_USE_SSL", default=True)
 EMAIL_USE_TLS = env_bool("SMTP_USE_TLS", default=False)
 DEFAULT_FROM_EMAIL = env("MAILBOX_EMAIL", "noreply@localhost")
+
+# PaddleOCR HTTP service (Docker / internal URL). Empty disables remote calls until configured.
+PADDLE_OCR_BASE_URL = env("PADDLE_OCR_BASE_URL", "").rstrip("/")
+PADDLE_OCR_PREDICT_PATH = env("PADDLE_OCR_PREDICT_PATH", "/predict")
+PADDLE_OCR_FILE_FIELD = env("PADDLE_OCR_FILE_FIELD", "file")
+# multipart: raw file upload. json_images: PaddleHub Serving {"images":[base64,...]}.
+PADDLE_OCR_REQUEST_FORMAT = env("PADDLE_OCR_REQUEST_FORMAT", "multipart")
+PADDLE_OCR_TIMEOUT_SECONDS = float(env("PADDLE_OCR_TIMEOUT_SECONDS", "90"))
+PADDLE_OCR_SCAN_MAX_BYTES = int(env("PADDLE_OCR_SCAN_MAX_BYTES", str(8 * 1024 * 1024)))

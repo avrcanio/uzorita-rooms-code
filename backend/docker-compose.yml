@@ -39,3 +39,22 @@ services:
       - ./app:/app
     network_mode: host
     restart: unless-stopped
+
+  paddle-ocr-fastapi:
+    build:
+      context: ../ocr_service
+    ports:
+      - "8866:8866"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8866/health').read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
