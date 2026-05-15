@@ -3,5 +3,6 @@ psycopg[binary]==3.2.10
 djangorestframework==3.16.1
 drf-spectacular==0.29.0
 Pillow==10.4.0
+opencv-python-headless==4.10.0.84
 httpx==0.28.1
 mrz==0.6.2

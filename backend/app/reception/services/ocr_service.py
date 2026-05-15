@@ -1,12 +1,37 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import logging
+import time
 from typing import Any
 from urllib.parse import urljoin
 
 import httpx
 from django.conf import settings
+from PIL import Image
+
+logger = logging.getLogger(__name__)
+
+
+def prepare_image_bytes_for_paddle_ocr(image_bytes: bytes) -> bytes:
+    """
+    Normalize document photo to grayscale JPEG (saved as RGB) before PaddleOCR.
+    On failure or when SCAN_OCR_GRAYSCALE_BEFORE_PREDICT is false, returns input unchanged.
+    """
+    if not getattr(settings, "SCAN_OCR_GRAYSCALE_BEFORE_PREDICT", True):
+        return image_bytes
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as im:
+            rgb = im.convert("RGB")
+            gray = rgb.convert("L")
+            buf = io.BytesIO()
+            gray.convert("RGB").save(buf, format="JPEG", quality=95, optimize=True)
+            return buf.getvalue()
+    except Exception as exc:
+        logger.warning("OCR input grayscale skipped (invalid image?): %s", exc)
+        return image_bytes
 
 
 class OCRServiceError(Exception):
@@ -99,20 +124,35 @@ class OCRService:
     def is_configured(self) -> bool:
         return bool(self._base)
 
-    def predict(self, *, image_bytes: bytes, filename: str, content_type: str | None) -> dict[str, Any]:
+    def predict(
+        self,
+        *,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+        skip_input_grayscale: bool = False,
+        mrz_crop_pass: bool = False,
+    ) -> dict[str, Any]:
         if not self._base:
             raise OCRServiceError("PADDLE_OCR_BASE_URL nije konfiguriran.")
+
+        if not skip_input_grayscale:
+            image_bytes = prepare_image_bytes_for_paddle_ocr(image_bytes)
 
         url = urljoin(self._base + "/", self._path.lstrip("/"))
 
         try:
             with httpx.Client(timeout=self._timeout) as client:
+                t0 = time.perf_counter()
                 if self._request_format == "json_images":
                     b64 = base64.b64encode(image_bytes).decode("ascii")
+                    payload: dict[str, Any] = {"images": [b64]}
+                    if mrz_crop_pass:
+                        payload["mrz_crop"] = True
                     response = client.post(
                         url,
                         headers={"Content-Type": "application/json"},
-                        json={"images": [b64]},
+                        json=payload,
                     )
                 else:
                     ct = content_type or "application/octet-stream"
@@ -134,4 +174,21 @@ class OCRService:
             raise OCRServiceError("PaddleOCR odgovor nije JSON.") from exc
 
         items, raw = normalize_paddle_response(payload)
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        if getattr(settings, "SCAN_OCR_TRACE_LOG", False):
+            logger.info(
+                "OCRService.predict: url=%s format=%s http=%s items=%d ms=%d",
+                url,
+                self._request_format,
+                response.status_code,
+                len(items),
+                elapsed_ms,
+            )
+            for i, it in enumerate(items):
+                logger.info(
+                    "OCRService.predict: item[%d] conf=%s text=%r",
+                    i,
+                    it.get("confidence"),
+                    (it.get("text") or "")[:500],
+                )
         return {"items": items, "raw": raw, "http_status": response.status_code}

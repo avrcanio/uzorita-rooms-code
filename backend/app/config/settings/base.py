@@ -126,6 +126,9 @@ IMAP_HOST = env("IMAP_HOST", "")
 IMAP_PORT = int(env("IMAP_PORT", "993"))
 IMAP_USE_SSL = env_bool("IMAP_USE_SSL", default=True)
 IMAP_FOLDER = env("IMAP_FOLDER", "INBOX")
+# Optional: TCP address for hairpin NAT (e.g. 127.0.0.1) while TLS uses IMAP_TLS_SERVERNAME or IMAP_HOST.
+IMAP_CONNECT_HOST = env("IMAP_CONNECT_HOST", "")
+IMAP_TLS_SERVERNAME = env("IMAP_TLS_SERVERNAME", "")
 
 EMAIL_HOST = env("SMTP_HOST", "")
 EMAIL_PORT = int(env("SMTP_PORT", "465"))
@@ -143,3 +146,56 @@ PADDLE_OCR_FILE_FIELD = env("PADDLE_OCR_FILE_FIELD", "file")
 PADDLE_OCR_REQUEST_FORMAT = env("PADDLE_OCR_REQUEST_FORMAT", "multipart")
 PADDLE_OCR_TIMEOUT_SECONDS = float(env("PADDLE_OCR_TIMEOUT_SECONDS", "90"))
 PADDLE_OCR_SCAN_MAX_BYTES = int(env("PADDLE_OCR_SCAN_MAX_BYTES", str(8 * 1024 * 1024)))
+# Drugi Paddle prolaz na donjem izrezu (MRZ) — smanjuje ultra-široka OCR polja.
+MRZ_OCR_SECOND_PASS = env_bool("MRZ_OCR_SECOND_PASS", default=True)
+# Donji izrez za MRZ drugi prolaz (ICAO: MRZ na dnu ID-1); 0.30–0.35.
+MRZ_CROP_HEIGHT_RATIO = float(env("MRZ_CROP_HEIGHT_RATIO", "0.325"))
+MRZ_CROP_PREPROCESS = env_bool("MRZ_CROP_PREPROCESS", default=True)
+MRZ_CROP_MERGE_MARGIN_PX = float(env("MRZ_CROP_MERGE_MARGIN_PX", "8"))
+# OpenCV: deskew + CLAHE + threshold + upscale prije drugog Paddle poziva.
+MRZ_CROP_UPSCALE = int(env("MRZ_CROP_UPSCALE", "2"))  # 2 ili 3
+MRZ_CROP_USE_OTSU = env_bool("MRZ_CROP_USE_OTSU", default=False)
+MRZ_CROP_DEBUG_IMAGES = env_bool("MRZ_CROP_DEBUG_IMAGES", default=False)
+# Nakon geometrijskog izreza: ako je duži rub veći, smanji crop (INTER_AREA) prije deskew/upscale.
+# Smanjuje RAM/CPU i timeout na originu (Cloudflare „invalid response“). 0 = isključeno.
+MRZ_CROP_MAX_LONG_EDGE = int(env("MRZ_CROP_MAX_LONG_EDGE", "1600"))
+# Gornja granica piksela nakon upscale-a (nh*nw*upscale^2); ako je prekoračeno, upscale se snizi.
+MRZ_CROP_MAX_PIXELS_AFTER_UPSCALE = int(env("MRZ_CROP_MAX_PIXELS_AFTER_UPSCALE", str(5_000_000)))
+# INFO logovi za sken: OCR stavke, MRZ kandidati, ishod (uglavnom reception.scan / mrz_pipeline).
+SCAN_OCR_TRACE_LOG = env_bool("SCAN_OCR_TRACE_LOG", default=DEBUG)
+# Ulaz za Paddle: pretvori u sive tonove (JPEG RGB, luminantni kanali) prije predict.
+SCAN_OCR_GRAYSCALE_BEFORE_PREDICT = env_bool("SCAN_OCR_GRAYSCALE_BEFORE_PREDICT", default=True)
+# Prazno = ne spremaj upload. Default: media/id_documents (ispod MEDIA_ROOT, vidi u IDE-u / preko /media/).
+# Apsolutna putanja ili relativno na BASE_DIR. Sadrži osobne podatke — u produkciji postavi prazno.
+SCAN_OCR_SAMPLE_DIR = env("SCAN_OCR_SAMPLE_DIR", "media/id_documents")
+# Uz spremljeni upload pisi <stem>.json (OCR/MRZ/raw za debug). Prazno sample dir = nema ni JSON-a.
+SCAN_OCR_DEBUG_JSON = env_bool("SCAN_OCR_DEBUG_JSON", default=True)
+# Uz sliku <stem>.paddle.json — isključivo paddle_response (+ crop prolaz ako postoji).
+SCAN_OCR_PADDLE_RAW_JSON = env_bool("SCAN_OCR_PADDLE_RAW_JSON", default=True)
+
+if SCAN_OCR_TRACE_LOG:
+    LOGGING = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "scan_trace": {
+                "format": "{levelname} {asctime} {name}: {message}",
+                "style": "{",
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "scan_trace",
+            },
+        },
+        "loggers": {
+            "reception": {
+                "handlers": ["console"],
+                "level": "INFO",
+                "propagate": False,
+            },
+        },
+    }
+else:
+    LOGGING = {}

@@ -1,5 +1,6 @@
-import imaplib
 import email
+import imaplib
+import ssl
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 
@@ -8,6 +9,26 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from communications.models import EmailAttachment, InboundEmail
+
+
+class _IMAP4SSLConnect(imaplib.IMAP4_SSL):
+    """IMAP4 SSL with separate TCP endpoint and TLS server name (SNI / cert check)."""
+
+    def __init__(
+        self,
+        connect_host: str,
+        port: int,
+        *,
+        tls_hostname: str,
+        ssl_context: ssl.SSLContext | None = None,
+        timeout: float | None = None,
+    ):
+        self._tls_hostname = tls_hostname
+        super().__init__(connect_host, port, ssl_context=ssl_context, timeout=timeout)
+
+    def _create_socket(self, timeout):
+        sock = imaplib.IMAP4._create_socket(self, timeout)
+        return self.ssl_context.wrap_socket(sock, server_hostname=self._tls_hostname)
 
 
 class Command(BaseCommand):
@@ -118,10 +139,19 @@ class Command(BaseCommand):
             raise CommandError(f"Missing IMAP settings: {', '.join(missing)}")
 
     def _connect(self):
+        connect_host = settings.IMAP_CONNECT_HOST or settings.IMAP_HOST
+        tls_name = settings.IMAP_TLS_SERVERNAME or settings.IMAP_HOST
         if settings.IMAP_USE_SSL:
-            imap = imaplib.IMAP4_SSL(settings.IMAP_HOST, settings.IMAP_PORT)
+            if connect_host != tls_name:
+                imap = _IMAP4SSLConnect(
+                    connect_host,
+                    settings.IMAP_PORT,
+                    tls_hostname=tls_name,
+                )
+            else:
+                imap = imaplib.IMAP4_SSL(connect_host, settings.IMAP_PORT)
         else:
-            imap = imaplib.IMAP4(settings.IMAP_HOST, settings.IMAP_PORT)
+            imap = imaplib.IMAP4(connect_host, settings.IMAP_PORT)
         imap.login(settings.MAILBOX_EMAIL, settings.MAILBOX_PASSWORD)
         return imap
 

@@ -47,18 +47,20 @@
 
 U [`backend/.env.example`](../../../backend/.env.example):
 
-- `PADDLE_OCR_BASE_URL` — baza URL-a servisa, npr. `http://127.0.0.1:8866` ili IP kontejnera na bridge mreži (vidi `docker inspect paddleocr`).
+- `PADDLE_OCR_BASE_URL` — uz [`backend/docker-compose.yml`](../../../backend/docker-compose.yml) s **`network_mode: host`** postavi **`http://127.0.0.1:8866`** (FastAPI OCR sluša na hostu). Ako jednog dana sve (uključujući Postgres) prebaciš u istu **bridge** mrežu, možeš koristiti DNS ime servisa, npr. `http://paddle-ocr-fastapi:8866`.
 - `PADDLE_OCR_PREDICT_PATH` — putanja POST rute. **PaddleHub Serving** (službeni PaddleOCR `deploy/hubserving`): npr. `/predict/ocr_system` (port tipično **8866** ako je jedan modul). Multipart API-ji često koriste `/predict`.
 - `PADDLE_OCR_REQUEST_FORMAT` — `multipart` (default) ili `json_images` za PaddleHub (`{"images":["<base64>"]}`, `Content-Type: application/json`).
 - `PADDLE_OCR_FILE_FIELD` — ime multipart polja za sliku (default `file`), koristi se samo kod `multipart`.
 - `PADDLE_OCR_TIMEOUT_SECONDS` — timeout HTTP klijenta (default `90`).
 - `PADDLE_OCR_SCAN_MAX_BYTES` — limit uploada (default `8388608`).
 
-### Docker napomena
+### Docker mreža (trenutni stack)
 
-Lokalni [`backend/docker-compose.yml`](../../../backend/docker-compose.yml) koristi `network_mode: host` za Django. U tom modu **hostname drugih stackova** (npr. `paddleocr`) često **nije** rješiv — koristite `127.0.0.1` s objavljenim portom ili uskladite Docker mrežu (isti user-defined network).
+**`django`**, **`booking-worker`** i **`paddle-ocr-fastapi`** koriste **`network_mode: host`**: Django i worker vide Postgres na **`127.0.0.1:5432`** na hostu; Django prema OCR-u ide na **`http://127.0.0.1:8866`** (isti host, nije potreban zasebni `ports:` mapping za OCR).
 
-**Ugrađeni FastAPI PaddleOCR** (`paddle-ocr-fastapi` u istom composeu): build iz [`ocr_service`](../../../ocr_service) (Python 3.10, port **8866**). Endpointi: `GET /health`, `POST /predict` s JSON `{"images":["<base64>", ...]}` (do 4 slike). Odgovor: `{"results": [[{"text","confidence","text_region"}, ...], ...]}` — usklađeno s `PADDLE_OCR_REQUEST_FORMAT=json_images` i `normalize_paddle_response` u backendu. Primjer env: `PADDLE_OCR_BASE_URL=http://127.0.0.1:8866`, `PADDLE_OCR_PREDICT_PATH=/predict`.
+Zašto ne klasična **bridge** mreža samo između kontejnera? Jer je Postgres često na **hostu** na `127.0.0.1`; iz bridge kontejnera `127.0.0.1` nije host, a `host.docker.internal` traži da Postgres prihvaća veze s Docker bridgea (`listen_addresses` / `pg_hba.conf`). Kad cijeli stack (uključujući PostGIS) bude u Composeu, možeš prebaciti na **`rooms_net`** i DNS imena servisa.
+
+**Ugrađeni FastAPI PaddleOCR** (`paddle-ocr-fastapi` u istom composeu): build iz [`ocr_service`](../../../ocr_service) (Python 3.10, port **8866**). Endpointi: `GET /health`, `POST /predict` s JSON `{"images":["<base64>", ...]}` (do 4 slike). Odgovor: `{"results": [[{"text","confidence","text_region"}, ...], ...]}` — usklađeno s `PADDLE_OCR_REQUEST_FORMAT=json_images` i `normalize_paddle_response` u backendu.
 
 ## Paddle HTTP kontrakt (implementacija)
 

@@ -441,6 +441,23 @@ export default function GuestDetailsPage() {
               <p className="mt-3 text-sm text-brand-cream/70">
                 Skeniranje dokumenata je prebačeno u mobilnu (Flutter) aplikaciju.
               </p>
+              <aside className="mt-4 rounded-xl border border-brand-gold/25 bg-black/30 p-4 text-sm text-brand-cream/85">
+                <p className="font-medium text-brand-cream">Savjet za MRZ (poleđina osobne)</p>
+                <ul className="mt-2 list-inside list-disc space-y-1 text-brand-cream/75">
+                  <li>
+                    U kadru držite <strong className="text-brand-cream">donji dio karte</strong> s tri MRZ linije
+                    (OCR-B); po mogućnosti neka zauzmu barem ~¼ visine slike.
+                  </li>
+                  <li>
+                    Kartu držite <strong className="text-brand-cream">ravno</strong>, paralelno s rubom kadra, bez
+                    jakog sjaja na MRZ.
+                  </li>
+                  <li>
+                    Ako MRZ i dalje ne prolazi, probajte bliži snimak samo MRZ zone — backend dodatno radi drugi OCR
+                    prolaz na donjem izrezu slike.
+                  </li>
+                </ul>
+              </aside>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <input
