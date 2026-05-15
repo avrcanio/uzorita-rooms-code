@@ -54,6 +54,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Nakon train+export: /opt/stacks/PaddleOCR/output/hr_id_rec_infer mora postojati
+    environment:
+      PADDLEOCR_REC_MODEL_DIR: /models/hr_id_rec_infer
+      PADDLEOCR_CPU_THREADS: "16"
+    volumes:
+      - /opt/stacks/PaddleOCR/output/hr_id_rec_infer:/models/hr_id_rec_infer:ro
     healthcheck:
       test:
         [

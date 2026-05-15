@@ -3,6 +3,12 @@ Prebivalište / adresa iz Paddle OCR stavki (iznad MRZ trake).
 
 Kad ``mrz_strip_y0`` nije poznat (npr. isključen drugi OCR prolaz), Y zona je
 ograničena omjerom visine slike — manje pouzdano; preferiraj drugi prolaz.
+
+Nakon izbora redaka primjenjuje se ``_normalize_address_diacritics_from_latin_ocr``:
+Paddle s ``lang=latin`` često gubi Ä/Č/ß pa se tipične zamjene ispravljaju heuristički
+(poznati primjeri + sufiks ``STRABE`` → ``STRAẞE``). Za druge ulice proširi pravila
+ili uvedi hunspell/LLM drugi prolaz; za bolji izvor znakova probaj drugi Paddle ``lang``
+u ``ocr_service`` (pazi na utjecaj na cijeli dokument).
 """
 
 from __future__ import annotations
@@ -30,6 +36,27 @@ _STOP_BEFORE_ADDRESS = re.compile(
     r"(IZDALA|ISSUED\s*BY|DATUM\s*IZDAVANJA|DATE\s*OF\s*ISSUE|DATEOFISSUE|\bOIB\b)",
     re.IGNORECASE,
 )
+
+
+def _normalize_address_diacritics_from_latin_ocr(display: str) -> str:
+    """
+    Vrati tekst s tipičnim dijakriticima kad Paddle ``lang=latin`` pročita
+    njemačko/hrvatsko polje kao čisti ASCII (Č→C, Ä→A, ẞ→B u ``STRABE``).
+
+    Heuristike su namjerno uske (poznati primjeri + sufiks ``STRABE``) da se
+    ne širi na cijeli OCR; za ostale ulice po potrebi proširi ovdje ili uvedi
+    hunspell/LLM drugi prolaz.
+    """
+    if not display:
+        return display
+    s = display
+    # Redoslijed: prvo dulji / specifičniji uzorci.
+    s = re.sub(r"(?i)GARTNERSTRABE", "GÄRTNERSTRAẞE", s)
+    s = re.sub(r"(?i)\bNJEMACKA\b", "NJEMAČKA", s)
+    # "Straße" često kao STRABE (B umjesto ß); sufiks nakon slova ili cijela riječ STRABE.
+    s = re.sub(r"(?i)(?<=[A-Za-zÄÖÜäöüß])STRABE(?=[,\s]|\d|$|\b)", "STRAẞE", s)
+    s = re.sub(r"(?i)\bSTRABE\b", "STRAẞE", s)
+    return s
 
 
 def _centroid_y(box: Any) -> float | None:
@@ -116,7 +143,7 @@ def suggest_residence_address_from_items(
             continue
         if not started and len(display) <= 2:
             continue
-        lines_out.append(display)
+        lines_out.append(_normalize_address_diacritics_from_latin_ocr(display))
         started = True
 
     if not lines_out:

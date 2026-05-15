@@ -253,6 +253,10 @@ class DocumentScanIngestView(APIView):
             if issue_iso3[:3] == "HRV":
                 updates["document_country_iso2"] = "HR"
 
+        adresa = as_str("adresa")
+        if adresa:
+            updates["address"] = adresa
+
         mrz = str(raw_payload.get("sirovi_mrz", "")).strip()
         if mrz:
             updates["mrz_raw_text"] = mrz
@@ -268,6 +272,7 @@ class DocumentScanIngestView(APIView):
             "document_number": doc_no,
             "nationality": nat,
             "date_of_birth": dob,
+            "address": adresa,
         }
         suggested_fields = {k: v for k, v in suggested_fields.items() if v}
 

@@ -585,6 +585,21 @@ class MrzPipelineTests(TestCase):
         r = run_mrz_pipeline(items)
         self.assertTrue(r["checksum_valid"], r)
 
+    def test_td1_paddle_i_zero_and_filler_noise_canonicalizes_to_valid_mrz(self):
+        """Stvarni Paddle izlaz: I0 umjesto I<, Z/X u ispuni — checksum mora proći."""
+        from reception.services.mrz_pipeline import _try_td1_from_extracted_three
+
+        three = [
+            "I0HRV119384087911528564544<<<<",
+            "7604234M3005121HRV<<<<<<<<Z<9<",
+            "VRCAN<<ANTE<<<<<<<<<X<<X<<<<<<",
+        ]
+        hit, _raw, _last = _try_td1_from_extracted_three(three, max_brute=4000)
+        self.assertIsNotNone(hit, "TD1 attempt expected")
+        assert hit is not None
+        self.assertTrue(bool(hit.checker))
+        self.assertEqual(hit.lines[0][:5], "I<HRV")
+
     def test_td1_multiline_bfs_restores_padding_and_separator(self):
         """Više jednostavnih zamjena (Z, K, C) koje MRZ_SUBSTITUTIONS pokriva + smart_padding."""
         code = str(
@@ -774,8 +789,17 @@ class AddressFromOcrTests(TestCase):
             {"text": "PP VODICE", "confidence": 0.99, "box": self._box(471.0, 539.0)},
         ]
         r = suggest_residence_address_from_items(items, mrz_strip_y0=900.0)
-        self.assertEqual(r["address_lines"], ["NJEMACKA, HANAU", "GARTNERSTRABE 44"])
-        self.assertEqual(r["address"], "NJEMACKA, HANAU, GARTNERSTRABE 44")
+        self.assertEqual(r["address_lines"], ["NJEMAČKA, HANAU", "GÄRTNERSTRAẞE 44"])
+        self.assertEqual(r["address"], "NJEMAČKA, HANAU, GÄRTNERSTRAẞE 44")
+
+    def test_strabe_suffix_normalized_to_strasse(self):
+        from reception.services.address_from_ocr import suggest_residence_address_from_items
+
+        items: list[dict[str, object]] = [
+            {"text": "HAUPTSTRABE 12", "confidence": 0.92, "box": self._box(100.0, 140.0)},
+        ]
+        r = suggest_residence_address_from_items(items, mrz_strip_y0=500.0)
+        self.assertEqual(r["address_lines"], ["HAUPTSTRAẞE 12"])
 
     def test_mrz_like_row_in_address_zone_excluded(self):
         from reception.services.address_from_ocr import suggest_residence_address_from_items

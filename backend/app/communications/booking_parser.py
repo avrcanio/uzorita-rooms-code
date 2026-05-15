@@ -326,6 +326,10 @@ _COUNTRY_TO_ISO2 = {
     "united kingdom": "GB",
     "great britain": "GB",
     "uk": "GB",
+    "united states": "US",
+    "united states of america": "US",
+    "usa": "US",
+    "u.s.a.": "US",
     "czech republic": "CZ",
     "czechia": "CZ",
     "austria": "AT",
@@ -334,6 +338,15 @@ _COUNTRY_TO_ISO2 = {
     "netherlands": "NL",
     "the netherlands": "NL",
     "nederland": "NL",
+    "belgium": "BE",
+    "belgique": "BE",
+    "belgie": "BE",
+    "switzerland": "CH",
+    "schweiz": "CH",
+    "suisse": "CH",
+    "svizzera": "CH",
+    "ukraine": "UA",
+    "ukraina": "UA",
     "serbia": "RS",
     "srbija": "RS",
     "montenegro": "ME",
@@ -362,6 +375,64 @@ def _country_to_iso2(value: str | None) -> str | None:
     # Handle "Croatia (Hrvatska)" / "France (FR)" and similar.
     key = re.sub(r"\s*\(.*?\)\s*$", "", key).strip()
     return _COUNTRY_TO_ISO2.get(key)
+
+
+_SKIP_GUEST_NAME_LINE_MARKERS = (
+    "** this reservation",
+    "booking note",
+    "non-smoking",
+    "nova grupna",
+    "rentlio",
+    "reservation has",
+    "approximate time",
+)
+
+
+def _looks_like_guest_name_line(line: str) -> bool:
+    candidate = line.strip()
+    if not candidate or "@" in candidate:
+        return False
+    lowered = candidate.lower()
+    if any(marker in lowered for marker in _SKIP_GUEST_NAME_LINE_MARKERS):
+        return False
+    if candidate.startswith("**"):
+        return False
+    if re.search(r"\bR\s*-?\s*\d+\b", candidate, re.I):
+        return False
+    if _RE_DATE_RANGE_DMY.search(candidate):
+        return False
+    if "booking.com id" in lowered:
+        return False
+    if re.search(r"(?i)\bdeluxe\b", candidate):
+        return False
+    if ":" in candidate:
+        return False
+    if any(ch.isdigit() for ch in candidate):
+        return False
+    if not (3 <= len(candidate) <= 120 and any(ch.isalpha() for ch in candidate)):
+        return False
+    # Group templates usually use "First Last"; avoid grabbing single-word notes.
+    if " " not in candidate and "," not in candidate:
+        return False
+    return True
+
+
+def _parse_guest_name_after_booking_id(lines: list[str], booking_number: str) -> tuple[str | None, str | None]:
+    """Rentlio group bookings sometimes include only a name line (no guest email)."""
+    for i, line in enumerate(lines):
+        if booking_number in line and "booking.com id" in line.lower():
+            for j in range(i + 1, min(len(lines), i + 5)):
+                candidate = lines[j].strip()
+                if not _looks_like_guest_name_line(candidate):
+                    continue
+                if "," in candidate:
+                    before, after = candidate.split(",", 1)
+                    name = before.strip()
+                    country = after.strip()
+                    if name:
+                        return (name, country or None)
+                return (candidate, None)
+    return (None, None)
 
 
 def _parse_name_country_near_email(lines: list[str], guest_email: str) -> tuple[str | None, str | None]:
@@ -477,6 +548,13 @@ def parse_booking_email(*, subject: str, body_text: str, body_html: str = "") ->
         if name:
             guest_full_name = name
         if country:
+            guest_nationality_iso2 = _country_to_iso2(country)
+
+    if not guest_full_name:
+        name, country = _parse_guest_name_after_booking_id(lines, booking_number)
+        if name:
+            guest_full_name = name
+        if country and not guest_nationality_iso2:
             guest_nationality_iso2 = _country_to_iso2(country)
 
     # Label based country (other templates)

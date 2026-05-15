@@ -330,6 +330,64 @@ def _td1_row_icao_width(fragment: str) -> str:
     return t.ljust(TD1_LINE_CHAR_COUNT, "<")
 
 
+def _canonicalize_td1_line1_doc_type_prefix(row: str) -> str:
+    """
+    OCR (npr. Paddle ``lang=latin``) često pročita ICAO «<» u drugom znaku kao ``0`` ili ``O``.
+    Za hrvatsku osobnu: očekuje se ``I<`` + ``HRV``.
+    """
+    t = _td1_row_icao_width(row)
+    if len(t) >= 5 and t[0] == "I" and t[1] in "0OQ" and t[2:5] == "HRV":
+        return "I<" + t[2:]
+    return t
+
+
+def _canonicalize_td1_line2_optional_fillers(row: str) -> str:
+    """
+    Opcijski blok (pozicije 18–28) mora biti «<»; znamenka na poziciji 29 je kompozitni CD.
+    OCR ponekad ubaci Z/K/X ili pomakne «<»; uzmi zadnju znamenku iz repa kao kandidat za CD.
+    """
+    t = _td1_row_icao_width(row)
+    if len(t) != 30:
+        return t
+    prefix = t[:18]
+    tail = t[18:30]
+    tail_clean = "".join("<" if c in "ZXK" else c for c in tail)
+    composite = "<"
+    for ch in reversed(tail_clean):
+        if ch.isdigit():
+            composite = ch
+            break
+    if composite == "<":
+        for i in range(18, 29):
+            if i < len(t) and t[i] in "ZXK":
+                ch = list(t)
+                ch[i] = "<"
+                t = "".join(ch)
+        return t
+    return prefix + "<" * 11 + composite
+
+
+def _canonicalize_td1_line3_name_tail_fillers(row: str) -> str:
+    """
+    Nakon ``prezime<<ime`` ostatak retka mora biti «<»; OCR šum (K, X, …) u ispuni.
+    """
+    t = _td1_row_icao_width(row)
+    m = re.match(r"^([^<]+)<<([^<]+)(.*)$", t)
+    if not m:
+        return t
+    sur, giv, tail = m.group(1), m.group(2), m.group(3)
+    return _td1_row_icao_width(sur + "<<" + giv + "<" * len(tail))
+
+
+def _canonicalize_td1_triple_common_ocr(lines: tuple[str, str, str] | list[str]) -> tuple[str, str, str]:
+    a, b, c = lines[0], lines[1], lines[2]
+    return (
+        _canonicalize_td1_line1_doc_type_prefix(a),
+        _canonicalize_td1_line2_optional_fillers(b),
+        _canonicalize_td1_line3_name_tail_fillers(c),
+    )
+
+
 def _fielderror_priority_indices(mrz_code: str, factory: Callable[[str], Any]) -> list[int]:
     """Indeksi znakova za koje checker prijavi FieldError (ili nisu dopušteni u MRZ skupu)."""
     try:
@@ -650,6 +708,7 @@ def _try_td1_from_extracted_three(
     if len(three) != 3 or not td1_lines_are_valid_shape(three):
         return None, list(three), list(three)
     raw = [_td1_row_icao_width(x) for x in three]
+    raw = list(_canonicalize_td1_triple_common_ocr((raw[0], raw[1], raw[2])))
     hinted = list(apply_td1_position_ocr_hints(*raw))
     hinted2 = [hinted[0], hinted[1], soften_td1_line3_garbage(hinted[2])]
     seen: set[str] = set()

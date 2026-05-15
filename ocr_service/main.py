@@ -33,9 +33,19 @@ async def lifespan(app: FastAPI):
         "enable_mkldnn": True,
         "show_log": False,
     }
+    rec_dir = os.getenv("PADDLEOCR_REC_MODEL_DIR", "").strip()
+    det_dir = os.getenv("PADDLEOCR_DET_MODEL_DIR", "").strip()
+    cls_dir = os.getenv("PADDLEOCR_CLS_MODEL_DIR", "").strip()
+    if rec_dir:
+        kwargs["rec_model_dir"] = rec_dir
+    if det_dir:
+        kwargs["det_model_dir"] = det_dir
+    if cls_dir:
+        kwargs["cls_model_dir"] = cls_dir
     sig = inspect.signature(PaddleOCR.__init__)
+    cpu_threads = int(os.getenv("PADDLEOCR_CPU_THREADS", "12"))
     if "cpu_threads" in sig.parameters:
-        kwargs["cpu_threads"] = 6
+        kwargs["cpu_threads"] = cpu_threads
     app.state.ocr = PaddleOCR(**kwargs)
     yield
 
