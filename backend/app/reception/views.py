@@ -257,6 +257,12 @@ class DocumentScanIngestView(APIView):
         if adresa:
             updates["address"] = adresa
 
+        tip = str(meta.get("tip_dokumenta", "")).strip().lower()
+        if tip == "passport":
+            updates["document_type"] = "Putovnica"
+        elif tip == "national_id":
+            updates["document_type"] = "Osobna iskaznica"
+
         mrz = str(raw_payload.get("sirovi_mrz", "")).strip()
         if mrz:
             updates["mrz_raw_text"] = mrz
