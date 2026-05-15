@@ -814,6 +814,25 @@ class AddressFromOcrTests(TestCase):
         r = suggest_residence_address_from_items(items, mrz_strip_y0=600.0)
         self.assertEqual(r, {})
 
+    def test_concatenated_paddle_blob_like_mobile_ocr_sample(self):
+        """Jedan dugačak OCR redak (label + adresa + IZDALA) — tipično na uređaju."""
+        from reception.services.address_from_ocr import suggest_residence_address_from_items
+
+        blob = (
+            "PREBIVALISTE/RESIDENCE KCard NSJEMACKAHANAU GARTNERSTRABE4A "
+            "2304-1976 IZDALA/ISSUEDBY PPEVODICE DATUMIZDAVANJA/DATEOF-ISSUE "
+            "12052025 OIB/PIN 11528564544"
+        )
+        items: list[dict[str, object]] = [
+            {"text": blob, "confidence": 0.91},
+        ]
+        r = suggest_residence_address_from_items(items, mrz_strip_y0=900.0)
+        self.assertIn("NJEMAČKA", r.get("address", ""))
+        self.assertTrue(
+            any("GÄRTNERSTRA" in ln or "GARTNERSTR" in ln for ln in r.get("address_lines", [])),
+            r,
+        )
+
 
 class PaddleDocumentScanViewTests(TestCase):
     def setUp(self):
