@@ -961,3 +961,129 @@ class PaddleDocumentScanViewTests(TestCase):
                     format="multipart",
                 )
         self.assertEqual(resp.status_code, 400)
+
+
+class VizIdExtractTests(TestCase):
+    def test_build_expected_td1_from_vrcan_sample(self):
+        from reception.services.viz_id_extract import build_expected_td1_lines
+
+        lines = build_expected_td1_lines(
+            {
+                "surname": "VRCAN",
+                "given_names": "ANTE",
+                "document_number": "119384087",
+                "birth_yymmdd": "760423",
+                "expiry_yymmdd": "300512",
+                "sex": "M",
+                "nationality": "HRV",
+            }
+        )
+        self.assertIsNotNone(lines)
+        assert lines is not None
+        self.assertEqual(len(lines[0]), 30)
+        self.assertIn("119384087", lines[0])
+        self.assertIn("VRCAN", lines[2])
+        self.assertIn("ANTE", lines[2])
+
+    def test_extract_viz_from_front_like_ocr(self):
+        from reception.services.viz_id_extract import extract_viz_fields_from_ocr, viz_fields_sufficient
+
+        items = [
+            {"text": "PREZIME/SURNAME", "box": [[100, 50], [200, 50], [200, 70], [100, 70]]},
+            {"text": "VRCAN", "box": [[220, 50], [300, 50], [300, 70], [220, 70]]},
+            {"text": "IME/NAME", "box": [[100, 90], [180, 90], [180, 110], [100, 110]]},
+            {"text": "ANTE", "box": [[220, 90], [280, 90], [280, 110], [220, 110]]},
+            {"text": "BROJ OSOBNE ISKAZNICE", "box": [[100, 200], [280, 200], [280, 220], [100, 220]]},
+            {"text": "119384087", "box": [[300, 200], [420, 200], [420, 220], [300, 220]]},
+            {"text": "DATUM RODENJA", "box": [[100, 150], [220, 150], [220, 170], [100, 170]]},
+            {"text": "23 04 1976", "box": [[240, 150], [340, 150], [340, 170], [240, 170]]},
+            {"text": "VRIJEDI DO", "box": [[100, 240], [200, 240], [200, 260], [100, 260]]},
+            {"text": "12 05 2030", "box": [[220, 240], [320, 240], [320, 260], [220, 260]]},
+        ]
+        viz = extract_viz_fields_from_ocr(items)
+        self.assertEqual(viz.get("surname"), "VRCAN")
+        self.assertEqual(viz.get("given_names"), "ANTE")
+        self.assertEqual(viz.get("document_number"), "119384087")
+        self.assertEqual(viz.get("birth_yymmdd"), "760423")
+        self.assertEqual(viz.get("expiry_yymmdd"), "300512")
+        self.assertTrue(viz_fields_sufficient(viz))
+
+    def test_mrz_pipeline_uses_viz_hints_when_ocr_corrupt(self):
+        from reception.services.viz_id_extract import build_expected_td1_lines
+
+        viz_lines = build_expected_td1_lines(
+            {
+                "surname": "VRCAN",
+                "given_names": "ANTE",
+                "document_number": "119384087",
+                "birth_yymmdd": "760423",
+                "expiry_yymmdd": "300512",
+                "sex": "M",
+            }
+        )
+        self.assertIsNotNone(viz_lines)
+        l1, l2, l3 = viz_lines
+        bad_l2 = l2[:8] + "O" + l2[9:]  # corrupt expiry digit
+        r = run_mrz_pipeline(
+            [{"text": l1}, {"text": bad_l2}, {"text": l3}],
+            viz_hint_lines=viz_lines,
+        )
+        self.assertTrue(r["checksum_valid"])
+        self.assertEqual(r["suggested_fields"].get("document_number"), "119384087")
+
+    def test_cross_check_warnings_on_mismatch(self):
+        from reception.services.viz_id_extract import cross_check_mrz_vs_viz
+
+        warnings = cross_check_mrz_vs_viz(
+            {
+                "document_number": "000000000",
+                "last_name": "VRCAN",
+                "first_name": "ANTE",
+            },
+            {"document_number": "119384087", "surname": "VRCAN", "given_names": "ANTE"},
+        )
+        self.assertTrue(any("dokumenta" in w.lower() for w in warnings))
+
+
+class PaddleDocumentScanFrontTests(TestCase):
+    def setUp(self):
+        self.rt = RoomType.objects.create(code="OCR-F", name_i18n={"en": "OCR"})
+        self.res = Reservation.objects.create(
+            external_id="paddle-front-1",
+            room_name="R1",
+            room_type=self.rt,
+            check_in_date=date(2026, 8, 1),
+            check_out_date=date(2026, 8, 5),
+            status=ReservationStatus.EXPECTED,
+        )
+        self.guest = Guest.objects.create(
+            reservation=self.res,
+            first_name="Ana",
+            last_name="Test",
+        )
+        self.user = User.objects.create_user("paddle_front", password="test-pass-123")
+
+    @override_settings(PADDLE_OCR_BASE_URL="http://paddle.test", MRZ_OCR_SECOND_PASS=True)
+    def test_front_scan_returns_viz_fields_without_mrz(self):
+        items = [
+            {"text": "PREZIME/SURNAME VRCAN", "confidence": 0.95},
+            {"text": "IME/NAME ANTE", "confidence": 0.95},
+            {"text": "119384087", "confidence": 0.99},
+        ]
+        client = APIClient()
+        client.force_login(self.user)
+        with patch.object(OCRService, "predict", return_value={"items": items, "raw": {}, "http_status": 200}):
+            resp = client.post(
+                "/api/v1/scan/",
+                data={
+                    "guest_id": self.guest.id,
+                    "document_side": "front",
+                    "file": SimpleUploadedFile("front.jpg", b"\xff\xd8\xff", content_type="image/jpeg"),
+                },
+                format="multipart",
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data.get("scan_status"), DocumentScanStatus.OK)
+        viz = (resp.data.get("suggested_fields") or {}).get("viz_fields") or {}
+        self.assertTrue(viz.get("document_number") or (viz.get("surname") and viz.get("given_names")))
+        self.assertFalse(resp.data.get("mrz", {}).get("checksum_valid"))

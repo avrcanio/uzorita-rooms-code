@@ -702,7 +702,10 @@ def _scan_td2_pairs(lines: list[str], max_brute: int) -> MrzAttempt | None:
 
 
 def _try_td1_from_extracted_three(
-    three: list[str], max_brute: int
+    three: list[str],
+    max_brute: int,
+    *,
+    viz_hint_lines: tuple[str, str, str] | None = None,
 ) -> tuple[MrzAttempt | None, list[str], list[str]]:
     """Pokušaj TD1 samo na tri izdvojena retka; vraća (attempt|None, prije hintova, zadnji triple prije checker-a)."""
     if len(three) != 3 or not td1_lines_are_valid_shape(three):
@@ -720,8 +723,9 @@ def _try_td1_from_extracted_three(
             continue
         seen.add(code)
         last_triple = list(triple)
+        brute_hints: tuple[str, ...] = viz_hint_lines if viz_hint_lines else (p1, p2, p3)
         hit = _brute_single_char(
-            code, TD1CodeChecker, max_attempts=max_brute, ocr_hint_lines=(p1, p2, p3)
+            code, TD1CodeChecker, max_attempts=max_brute, ocr_hint_lines=brute_hints
         )
         if hit:
             fixed, chk = hit
@@ -764,9 +768,12 @@ def run_mrz_pipeline(
     max_brute_attempts: int = 4000,
     image_height: int | None = None,
     mrz_strip_y0: float | None = None,
+    viz_hint_lines: tuple[str, str, str] | None = None,
 ) -> dict[str, Any]:
     """
     OCR stavke → MRZ. TD1: prvo izdvajanje tri MRZ retka (bez adresnih polja), zatim TD3/TD2 fallback.
+
+    ``viz_hint_lines``: očekivane TD1 linije s prednje strane (VIZ) — koriste se kao sidra u brute-forceu.
     """
     if _trace():
         logger.info("mrz_pipeline: input_items=%d", len(ocr_items))
@@ -795,7 +802,13 @@ def run_mrz_pipeline(
     td1_attempt: MrzAttempt | None = None
     if len(ex_lines) == 3:
         td1_attempt, _before_hint, _after_triple = _try_td1_from_extracted_three(
-            ex_lines, max_brute_attempts
+            ex_lines, max_brute_attempts, viz_hint_lines=viz_hint_lines
+        )
+    if td1_attempt is None and viz_hint_lines and len(viz_hint_lines) == 3:
+        td1_attempt, _before_hint, _after_triple = _try_td1_from_extracted_three(
+            list(viz_hint_lines),
+            max_brute_attempts,
+            viz_hint_lines=viz_hint_lines,
         )
 
     lines_fallback = _candidate_strings(ocr_items)

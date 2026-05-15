@@ -23,6 +23,13 @@ from .services.mrz_image_crop import (
 )
 from .services.address_from_ocr import suggest_residence_address_from_items
 from .services.mrz_pipeline import run_mrz_pipeline
+from .services.viz_id_extract import (
+    build_expected_td1_lines,
+    cross_check_mrz_vs_viz,
+    extract_viz_fields_from_ocr,
+    normalize_viz_hints,
+    viz_fields_sufficient,
+)
 from .services.ocr_sample_store import (
     save_mrz_crop_debug_stages,
     save_scan_debug_sidecar,
@@ -38,12 +45,37 @@ class PaddleScanSerializer(serializers.Serializer):
     file = serializers.FileField()
     guest_id = serializers.IntegerField(min_value=1)
     reservation_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    document_side = serializers.ChoiceField(
+        choices=["front", "back"],
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    viz_hints = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def validate_file(self, value):
         max_bytes = int(getattr(settings, "PADDLE_OCR_SCAN_MAX_BYTES", 8 * 1024 * 1024))
         if value.size > max_bytes:
             raise serializers.ValidationError(f"Datoteka je prevelika (max {max_bytes} bajtova).")
         return value
+
+    def validate_viz_hints(self, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        try:
+            parsed = json.loads(value) if isinstance(value, str) else value
+        except json.JSONDecodeError as exc:
+            raise serializers.ValidationError("viz_hints mora biti valjan JSON objekt.") from exc
+        if not isinstance(parsed, dict):
+            raise serializers.ValidationError("viz_hints mora biti JSON objekt.")
+        return normalize_viz_hints(parsed)
+
+    def validate(self, attrs):
+        side = (attrs.get("document_side") or "back").strip().lower()
+        if side not in ("front", "back"):
+            side = "back"
+        attrs["document_side"] = side
+        return attrs
 
 
 def _scan_debug_payload(
@@ -162,6 +194,9 @@ class PaddleDocumentScanView(APIView):
         guest_id = ser.validated_data["guest_id"]
         reservation_id = ser.validated_data.get("reservation_id")
         upload = ser.validated_data["file"]
+        document_side = ser.validated_data.get("document_side") or "back"
+        viz_hints = ser.validated_data.get("viz_hints") or {}
+        viz_hint_lines = build_expected_td1_lines(viz_hints) if viz_hints else None
 
         guest = Guest.objects.select_related("reservation").filter(pk=guest_id).first()
         if guest is None:
@@ -195,8 +230,9 @@ class PaddleDocumentScanView(APIView):
             }
         )
         suggested_fields: dict[str, Any] = {}
-        raw_payload: dict[str, Any] = {"provider": "paddleocr"}
+        raw_payload: dict[str, Any] = {"provider": "paddleocr", "document_side": document_side}
         scan_status = DocumentScanStatus.FAILED
+        warnings: list[str] = []
 
         ocr = OCRService()
         if not ocr.is_configured():
@@ -319,6 +355,54 @@ class PaddleDocumentScanView(APIView):
                 full_w, full_h = None, None
             mrz_strip_y0: float | None = None
 
+            if document_side == "front":
+                viz_fields = extract_viz_fields_from_ocr(items)
+                suggested_fields = {"viz_fields": viz_fields}
+                raw_payload["viz_fields"] = viz_fields
+                if viz_fields_sufficient(viz_fields):
+                    scan_status = DocumentScanStatus.OK
+                    error_message = ""
+                else:
+                    scan_status = DocumentScanStatus.FAILED
+                    error_message = (
+                        "Prednja strana: nije prepoznat broj dokumenta niti ime i prezime. "
+                        "Ponovite sken ili nastavite na stražnju stranu."
+                    )
+                ocr_block = {
+                    "items": items,
+                    "http_status": paddle_http,
+                    "configured": True,
+                }
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                log = DocumentScanLog.objects.create(
+                    reservation_id=guest.reservation_id,
+                    guest=guest,
+                    status=scan_status,
+                    method="OCR",
+                    device_id="paddleocr",
+                    scanned_at=None,
+                    duration_ms=elapsed_ms,
+                    raw_payload=_raw_payload_json_safe(raw_payload),
+                    suggested_fields=suggested_fields,
+                    corrected_fields={},
+                    error_message=error_message,
+                    created_by=request.user if request.user.is_authenticated else None,
+                )
+                return Response(
+                    {
+                        "scan_log_id": log.id,
+                        "scan_status": scan_status,
+                        "duration_ms": elapsed_ms,
+                        "ocr": ocr_block,
+                        "mrz": mrz_block,
+                        "suggested_fields": suggested_fields,
+                        "raw_payload": log.raw_payload,
+                        "error": error_message,
+                        "warnings": warnings,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
             if getattr(settings, "MRZ_OCR_SECOND_PASS", True) and items:
                 try:
                     ratio = float(getattr(settings, "MRZ_CROP_HEIGHT_RATIO", "0.325"))
@@ -404,10 +488,16 @@ class PaddleDocumentScanView(APIView):
             }
 
             t_mrz = time.perf_counter()
+            if viz_hints:
+                raw_payload["viz_hints"] = viz_hints
+            if viz_hint_lines:
+                raw_payload["viz_hint_lines"] = list(viz_hint_lines)
+
             mrz_full = run_mrz_pipeline(
                 items,
                 image_height=full_h,
                 mrz_strip_y0=mrz_strip_y0,
+                viz_hint_lines=viz_hint_lines,
             )
             raw_payload["timing_ms"]["mrz_pipeline"] = int((time.perf_counter() - t_mrz) * 1000)
             mrz_block = _mrz_block_public(mrz_full)
@@ -421,6 +511,9 @@ class PaddleDocumentScanView(APIView):
                 suggested_fields["address_lines"] = addr_hint["address_lines"]
             if addr_hint.get("address"):
                 suggested_fields["address"] = addr_hint["address"]
+
+            if viz_hints and mrz_full.get("checksum_valid"):
+                warnings = cross_check_mrz_vs_viz(suggested_fields, viz_hints)
 
             if mrz_full.get("checksum_valid"):
                 scan_status = DocumentScanStatus.OK
@@ -503,6 +596,7 @@ class PaddleDocumentScanView(APIView):
                     "suggested_fields": suggested_fields,
                     "raw_payload": raw_payload,
                     "error": error_message,
+                    "warnings": warnings,
                     "ocr_debug_json_path": debug_json_path,
                     "ocr_paddle_json_path": paddle_json_path,
                 },

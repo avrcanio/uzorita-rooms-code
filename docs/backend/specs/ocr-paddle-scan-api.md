@@ -23,6 +23,8 @@
 | `file`           | da       | Slika dokumenta (JPEG/PNG…). Maks. veličina: `PADDLE_OCR_SCAN_MAX_BYTES` (default 8 MiB). |
 | `guest_id`       | da       | ID gosta; rezervacija se uzima iz `guest.reservation_id` za audit FK. |
 | `reservation_id` | ne       | Ako je poslan, mora se podudarati s `guest.reservation_id` (zaštita od zloupotrebe). |
+| `document_side`  | ne       | `front` ili `back` (default `back`). Prednja: samo VIZ ekstrakcija, bez MRZ crop drugog prolaza. |
+| `viz_hints`      | ne       | JSON string s poljima s prednje strane (`surname`, `given_names`, `document_number`, `birth_yymmdd`, `expiry_yymmdd`, `sex`, …) — na stražnjoj strani pomaže MRZ pipeline. |
 
 ### Odgovor (200)
 
@@ -33,7 +35,8 @@
 | `duration_ms`      | int    | Trajanje obrade na serveru. |
 | `ocr`              | object | `items` (lista `{text, confidence?, box?}`), `http_status`, `configured`. |
 | `mrz`              | object | `lines`, `format` (`TD1`/`TD2`/`TD3` ili `null`), `checksum_valid`, `parsed`, `corrected`, `correction`. |
-| `suggested_fields` | object | Polja usklađena s `Guest` / preview modelom (npr. `first_name`, `last_name`, `document_number`, datumi, `nationality`, `mrz_raw_text`, …) kad je MRZ valjan. |
+| `suggested_fields` | object | MRZ: `first_name`, `last_name`, `document_number`, datumi, `mrz_raw_text`, `address` / `address_lines`. Prednja: `viz_fields` (VIZ sidra). |
+| `warnings`         | list   | Upozorenja kad MRZ na stražnjoj ne odgovara `viz_hints` s prednje (ne blokira upis). |
 | `raw_payload`      | object | `provider: paddleocr`, odgovor Paddle servisa (`paddle_response`), MRZ meta. |
 | `error`            | string | Poruka za UI; prazno ako je `scan_status=ok`. |
 
