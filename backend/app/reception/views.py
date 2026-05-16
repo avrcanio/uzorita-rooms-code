@@ -33,7 +33,11 @@ class ReservationTimelineListView(generics.ListAPIView):
         queryset = (
             Reservation.objects.all()
             .annotate(guests_count=Count("guests", distinct=True))
-            .prefetch_related(Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")))
+            .prefetch_related(
+                Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),
+                "units__room",
+                "units__room_type",
+            )
             .order_by("check_in_date", "room_name", "id")
         )
 
@@ -78,7 +82,11 @@ class ReservationDetailView(generics.RetrieveAPIView):
     def get_queryset(self):
         return (
             Reservation.objects.annotate(guests_count=Count("guests", distinct=True))
-            .prefetch_related(Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")))
+            .prefetch_related(
+                Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),
+                "units__room",
+                "units__room_type",
+            )
             .order_by("id")
         )
 

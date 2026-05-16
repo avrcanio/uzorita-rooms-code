@@ -9,8 +9,8 @@ from django.db import transaction
 from communications.booking_parser import BookingParseException, parse_booking_email
 from communications.models import InboundEmail, ParseError, ParseStatus
 from reception.booking_import import status_from_booking_kind, upsert_reservation_from_booking_payload
-from reception.models import Reservation, ReservationStatus
-from rooms.services import canonical_room_info, preferred_room_code_from_parsed_room_name
+from reception.models import ImportSource, Reservation, ReservationStatus
+from rooms.services import canonical_room_info
 
 
 def _record_error(
@@ -28,11 +28,16 @@ def _record_error(
     )
 
 
+def _cancel_suffix_reservations(booking_number: str) -> int:
+    return Reservation.objects.filter(external_id__startswith=f"{booking_number}-").update(
+        status=ReservationStatus.CANCELED
+    )
+
+
 @transaction.atomic
 def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = False) -> dict[str, Any]:
     inbound = InboundEmail.objects.select_for_update().get(id=inbound_email_id)
 
-    # Re-processing should replace previous error info for this email.
     inbound.parse_errors.all().delete()
     inbound.parse_note = ""
 
@@ -71,16 +76,19 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
             inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
             return {"status": "dry_run", "external_id": payload.booking_number}
 
-        # Cancellation emails can apply to multi-room bookings; cancel all reservations for this booking.
         if status == ReservationStatus.CANCELED:
             Reservation.objects.filter(external_id=payload.booking_number).update(status=ReservationStatus.CANCELED)
-            Reservation.objects.filter(external_id__startswith=f"{payload.booking_number}-").update(
-                status=ReservationStatus.CANCELED
-            )
+            canceled_suffix = _cancel_suffix_reservations(payload.booking_number)
 
             inbound.parse_status = ParseStatus.PARSED
             inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
-            return {"status": "parsed", "external_id": payload.booking_number, "reservation_ids": [], "primary_guest_ids": []}
+            return {
+                "status": "parsed",
+                "external_id": payload.booking_number,
+                "reservation_ids": [],
+                "primary_guest_ids": [],
+                "canceled_suffix": canceled_suffix,
+            }
 
         room_items = payload.rooms or [
             {
@@ -92,59 +100,57 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
             }
         ]
 
-        reservation_ids: list[int] = []
-        primary_guest_ids: list[int] = []
-
-        for idx, item in enumerate(room_items):
-            external_id = payload.booking_number if idx == 0 else f"{payload.booking_number}-{idx + 1}"
+        canonical_names: list[str] = []
+        for item in room_items:
             parsed_room_name = (item.get("room_name") or "").strip() or payload.room_name
-            preferred_code = preferred_room_code_from_parsed_room_name(parsed_room_name)
-            room_type, room_name = canonical_room_info(
+            _room_type, room_name = canonical_room_info(
                 parsed_room_name=parsed_room_name,
                 fallback_room_name=payload.property_name,
             )
+            canonical_names.append(room_name)
 
-            amount = None
-            raw_amount = item.get("amount")
-            if raw_amount:
-                try:
-                    amount = Decimal(str(raw_amount))
-                except Exception:
-                    amount = None
+        combined_room_name = ", ".join(canonical_names) if canonical_names else (payload.room_name or "Unknown")
+        first_item = room_items[0]
 
-            currency = (item.get("currency") or payload.currency or "").strip() or None
+        multi = len(room_items) > 1
+        amount = None
+        raw_amount = first_item.get("amount")
+        if raw_amount:
+            try:
+                amount = Decimal(str(raw_amount))
+            except Exception:
+                amount = None
+        if amount is None and payload.total_amount is not None and not multi:
+            amount = payload.total_amount
 
-            item_check_in = parse_date((item.get("check_in_date") or "").strip()) or payload.check_in_date
-            item_check_out = parse_date((item.get("check_out_date") or "").strip()) or payload.check_out_date
+        currency = (first_item.get("currency") or payload.currency or "").strip() or None
+        check_in = parse_date((first_item.get("check_in_date") or "").strip()) or payload.check_in_date
+        check_out = parse_date((first_item.get("check_out_date") or "").strip()) or payload.check_out_date
 
-            multi = len(room_items) > 1
-            amount_to_save = amount if amount is not None else (payload.total_amount if not multi else None)
+        result = upsert_reservation_from_booking_payload(
+            external_id=payload.booking_number,
+            room_name=combined_room_name,
+            check_in_date=check_in,
+            check_out_date=check_out,
+            status=status,
+            guest_full_name=payload.guest_full_name,
+            guest_email=payload.guest_email,
+            guest_nationality_iso2=payload.guest_nationality_iso2,
+            total_amount=amount,
+            currency=currency,
+            import_source=ImportSource.BOOKING_EMAIL,
+        )
 
-            result = upsert_reservation_from_booking_payload(
-                external_id=external_id,
-                room_name=room_name,
-                room_type=room_type,
-                check_in_date=item_check_in,
-                check_out_date=item_check_out,
-                status=status,
-                guest_full_name=payload.guest_full_name,
-                guest_email=payload.guest_email,
-                guest_nationality_iso2=payload.guest_nationality_iso2,
-                preferred_room_code=preferred_code,
-                total_amount=amount_to_save,
-                currency=currency,
-            )
-            reservation_ids.append(result.reservation_id)
-            if result.primary_guest_id:
-                primary_guest_ids.append(result.primary_guest_id)
+        canceled_suffix = _cancel_suffix_reservations(payload.booking_number)
 
         inbound.parse_status = ParseStatus.PARSED
         inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
         return {
             "status": "parsed",
             "external_id": payload.booking_number,
-            "reservation_ids": reservation_ids,
-            "primary_guest_ids": primary_guest_ids,
+            "reservation_ids": [result.reservation_id],
+            "primary_guest_ids": [result.primary_guest_id] if result.primary_guest_id else [],
+            "canceled_suffix": canceled_suffix,
         }
     except BookingParseException as e:
         inbound.parse_status = ParseStatus.FAILED

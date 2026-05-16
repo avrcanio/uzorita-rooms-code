@@ -9,23 +9,19 @@ class ReservationStatus(models.TextChoices):
     CANCELED = "canceled", "Otkazan"
 
 
+class BookingChannelStatus(models.TextChoices):
+    OK = "ok", "OK"
+    CANCELLED_BY_GUEST = "cancelled_by_guest", "Otkazao gost"
+
+
+class ImportSource(models.TextChoices):
+    BOOKING_XLS = "booking_xls", "Booking XLS"
+    BOOKING_EMAIL = "booking_email", "Booking email"
+
+
 class Reservation(models.Model):
     external_id = models.CharField(max_length=128, unique=True)
-    room_name = models.CharField(max_length=128)
-    room_type = models.ForeignKey(
-        "rooms.RoomType",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="reservations",
-    )
-    room = models.ForeignKey(
-        "rooms.Room",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="reservations",
-    )
+    room_name = models.CharField(max_length=512)
     check_in_date = models.DateField()
     check_out_date = models.DateField()
     status = models.CharField(
@@ -35,6 +31,32 @@ class Reservation(models.Model):
     )
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=3, default="EUR")
+    booker_name = models.CharField(max_length=255, blank=True)
+    booked_at = models.DateTimeField(null=True, blank=True)
+    booking_status = models.CharField(max_length=64, blank=True)
+    units_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    persons_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    adults_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    children_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    children_ages = models.CharField(max_length=128, blank=True)
+    commission_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    commission_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    payment_status = models.CharField(max_length=128, blank=True)
+    payment_provider = models.CharField(max_length=255, blank=True)
+    notes = models.TextField(blank=True)
+    booker_country = models.CharField(max_length=8, blank=True)
+    travel_purpose = models.CharField(max_length=128, blank=True)
+    booking_device = models.CharField(max_length=64, blank=True)
+    nights_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+    booker_address = models.TextField(blank=True)
+    booker_phone = models.CharField(max_length=64, blank=True)
+    import_source = models.CharField(
+        max_length=32,
+        choices=ImportSource.choices,
+        blank=True,
+    )
+    imported_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -52,24 +74,69 @@ class Reservation(models.Model):
         if self.check_in_date and self.check_out_date and self.check_in_date >= self.check_out_date:
             raise ValidationError({"check_out_date": "Check-out date must be after check-in date."})
 
-        if self.status == ReservationStatus.CANCELED:
+
+class ReservationUnit(models.Model):
+    reservation = models.ForeignKey(
+        Reservation,
+        on_delete=models.CASCADE,
+        related_name="units",
+    )
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    room_name = models.CharField(max_length=256)
+    room_type = models.ForeignKey(
+        "rooms.RoomType",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reservation_units",
+    )
+    room = models.ForeignKey(
+        "rooms.Room",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reservation_units",
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["reservation_id", "sort_order", "id"]
+        verbose_name = "Jedinica rezervacije"
+        verbose_name_plural = "Jedinice rezervacije"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reservation", "sort_order"],
+                name="unique_unit_sort_order_per_reservation",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reservation.external_id} #{self.sort_order}: {self.room_name}"
+
+    def clean(self):
+        super().clean()
+        reservation = self.reservation
+
+        if self.room_id and self.room_type_id and self.room.room_type_id != self.room_type_id:
+            raise ValidationError({"room": "Selected room does not match selected room type."})
+
+        if reservation.status == ReservationStatus.CANCELED:
+            return
+        if not self.room_id or not reservation.check_in_date or not reservation.check_out_date:
             return
 
-        if self.room_id and self.room_type_id:
-            # Keep data consistent when both are provided.
-            if self.room.room_type_id != self.room_type_id:
-                raise ValidationError({"room": "Selected room does not match selected room type."})
-
-        if not self.room_id or not self.check_in_date or not self.check_out_date:
-            return
-
-        # Prevent overlapping reservations for the same physical room.
         conflict = (
-            Reservation.objects.filter(room_id=self.room_id)
+            ReservationUnit.objects.filter(room_id=self.room_id)
             .exclude(pk=self.pk)
-            .exclude(status=ReservationStatus.CANCELED)
-            .filter(check_in_date__lt=self.check_out_date, check_out_date__gt=self.check_in_date)
-            .order_by("check_in_date", "id")
+            .exclude(reservation__status=ReservationStatus.CANCELED)
+            .filter(
+                reservation__check_in_date__lt=reservation.check_out_date,
+                reservation__check_out_date__gt=reservation.check_in_date,
+            )
+            .select_related("reservation")
+            .order_by("reservation__check_in_date", "id")
             .first()
         )
         if conflict:
@@ -77,7 +144,8 @@ class Reservation(models.Model):
                 {
                     "room": (
                         f"Room {self.room} is already booked for an overlapping period "
-                        f"({conflict.check_in_date} -> {conflict.check_out_date}, external_id={conflict.external_id})."
+                        f"({conflict.reservation.check_in_date} -> {conflict.reservation.check_out_date}, "
+                        f"external_id={conflict.reservation.external_id})."
                     )
                 }
             )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import re
 import statistics
 from dataclasses import dataclass
 from typing import Any
@@ -386,6 +387,109 @@ def _shift_box_y(box: Any, dy: float) -> Any:
     return out
 
 
+def _td1_line1_quality_score(norm: str) -> int:
+    """Viši = vjerojatnije valjan TD1 red 1 (I<HRV…). T01/1OHR su tipičan CLAHE+custom-rec šum."""
+    if re.match(r"^I[<]HRV", norm):
+        return 100
+    if re.match(r"^I0HRV", norm):
+        return 90
+    if re.match(r"^IOHRV", norm):
+        return 85
+    if re.match(r"^10HRV", norm):
+        return 70
+    if re.match(r"^[IT][01]R", norm) or re.match(r"^T0", norm) or re.match(r"^10[0-9]R", norm):
+        return 5
+    if "HRV" in norm[:10]:
+        return 40
+    return 0
+
+
+def _best_td1_line1_quality(items: list[dict[str, Any]]) -> int:
+    best = 0
+    for it in items:
+        norm = _normalize_text_for_mrz(str(it.get("text") or ""))
+        if len(norm) < 12:
+            continue
+        if "HRV" in norm[:12] or norm[:1] in "IT":
+            best = max(best, _td1_line1_quality_score(norm))
+    return best
+
+
+def _pick_best_td1_line_item(items: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    best_score = -1
+    for it in items:
+        norm = _normalize_text_for_mrz(str(it.get("text") or ""))
+        score = 0
+        if kind == "line1":
+            score = _td1_line1_quality_score(norm)
+        elif kind == "line2":
+            if 15 <= len(norm) <= 32 and norm[:6].isdigit():
+                score = 40 + norm.count("<") + (10 if len(norm) >= 28 else 0)
+        elif kind == "line3":
+            if any(ch.isalpha() for ch in norm) and "<" in norm:
+                score = 20 + norm.count("<")
+        if score > best_score:
+            best_score = score
+            best = dict(it)
+    return best
+
+
+def _strip_has_full_td1_line2(items: list[dict[str, Any]]) -> bool:
+    it = _pick_best_td1_line_item(items, "line2")
+    if not it:
+        return False
+    norm = _normalize_text_for_mrz(str(it.get("text") or ""))
+    return len(norm) >= 28 and norm.count("<") >= 5
+
+
+def _hybrid_mrz_strip_merge(
+    in_strip: list[dict[str, Any]],
+    crop_items: list[dict[str, Any]],
+    *,
+    crop_y0: float,
+) -> list[dict[str, Any]]:
+    """Puni kadar line1 + crop line2/3 kad je puni red 2 prerezan, a crop line1 je šum."""
+    dy = float(crop_y0)
+    out: list[dict[str, Any]] = []
+
+    def _maybe_shift(row: dict[str, Any], from_crop: bool) -> dict[str, Any]:
+        item = dict(row)
+        if from_crop:
+            box = item.get("box")
+            if box is not None:
+                item["box"] = _shift_box_y(box, dy)
+        return item
+
+    l1 = _pick_best_td1_line_item(in_strip, "line1")
+    if l1:
+        out.append(l1)
+
+    l2_crop = _pick_best_td1_line_item(crop_items, "line2")
+    l2_full = _pick_best_td1_line_item(in_strip, "line2")
+    if l2_crop and (
+        not l2_full
+        or _normalize_text_for_mrz(str(l2_crop.get("text") or "")).count("<")
+        > _normalize_text_for_mrz(str(l2_full.get("text") or "")).count("<")
+    ):
+        out.append(_maybe_shift(l2_crop, True))
+    elif l2_full:
+        out.append(l2_full)
+
+    l3_crop = _pick_best_td1_line_item(crop_items, "line3")
+    l3_full = _pick_best_td1_line_item(in_strip, "line3")
+    if l3_crop and (
+        not l3_full
+        or _normalize_text_for_mrz(str(l3_crop.get("text") or "")).count("<")
+        >= _normalize_text_for_mrz(str(l3_full.get("text") or "")).count("<")
+    ):
+        out.append(_maybe_shift(l3_crop, True))
+    elif l3_full:
+        out.append(l3_full)
+
+    return out
+
+
 def _strip_has_truncated_td1_line2(in_strip: list[dict[str, Any]]) -> bool:
     """
     True ako puni kadar u MRZ traci ima prerezan TD1 red 2 (kratko + premalo filler «<»).
@@ -432,14 +536,30 @@ def merge_fullframe_and_mrz_crop_items(
 
     crop_conf_max = max((float(x.get("confidence") or 0.0) for x in crop_items), default=0.0)
     strip_conf_max = max((float(x.get("confidence") or 0.0) for x in in_strip), default=0.0)
+    full_l1_q = _best_td1_line1_quality(in_strip)
+    crop_l1_q = _best_td1_line1_quality(crop_items)
+
+    truncated_l2 = _strip_has_truncated_td1_line2(in_strip)
+    good_full_bad_crop_l1 = bool(in_strip) and full_l1_q >= 80 and crop_l1_q < 50
+    use_hybrid_mrz = good_full_bad_crop_l1 and truncated_l2 and _strip_has_full_td1_line2(crop_items)
 
     # Zahtijevaj barem jedan „jak“ puni-kadar signal u traci; inače crop (ili zadana logika ispod).
-    prefer_full_strip = (
-        bool(in_strip)
-        and strip_conf_max >= 0.75
-        and strip_conf_max >= crop_conf_max - 0.025
-        and not _strip_has_truncated_td1_line2(in_strip)
+    prefer_full_strip = bool(in_strip) and (
+        (good_full_bad_crop_l1 and not use_hybrid_mrz)
+        or (
+            strip_conf_max >= 0.75
+            and strip_conf_max >= crop_conf_max - 0.025
+            and not truncated_l2
+        )
+        or (
+            full_l1_q >= crop_l1_q + 25
+            and full_l1_q >= 70
+            and not truncated_l2
+        )
     )
+
+    if use_hybrid_mrz:
+        return above_strip + _hybrid_mrz_strip_merge(in_strip, crop_items, crop_y0=float(crop_y0))
 
     if prefer_full_strip:
         return above_strip + in_strip

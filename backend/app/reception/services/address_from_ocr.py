@@ -65,7 +65,13 @@ def _normalize_address_diacritics_from_latin_ocr(display: str) -> str:
     s = display
     # Redoslijed: prvo dulji / specifičniji uzorci.
     s = re.sub(r"(?i)GARTNERSTRABE", "GÄRTNERSTRAẞE", s)
+    s = re.sub(r"(?i)GARTNERSTRASEW(\d+)", r"GÄRTNERSTRAẞE \1", s)
+    s = re.sub(r"(?i)GARTNERSTRASEW", "GÄRTNERSTRAẞE", s)
+    s = re.sub(r"(?i)STRASEW(?=\d)", "STRAẞE ", s)
+    s = re.sub(r"(?i)(?<=[A-Za-zÄÖÜäöüß])STRASE(?=\d)", "STRAẞE ", s)
     s = re.sub(r"(?i)\bNJEMACKA\b", "NJEMAČKA", s)
+    s = re.sub(r"(?i)\bNTEMACKA\b", "NJEMAČKA", s)
+    s = re.sub(r"(?i)\bTEMACKA\b", "NJEMAČKA", s)
     # "Straße" često kao STRABE (B umjesto ß); sufiks nakon slova ili cijela riječ STRABE.
     s = re.sub(r"(?i)(?<=[A-Za-zÄÖÜäöüß])STRABE(?=[,\s]|\d|$|\b)", "STRAẞE", s)
     s = re.sub(r"(?i)\bSTRABE\b", "STRAẞE", s)
@@ -101,6 +107,16 @@ def _is_stop_line(display: str) -> bool:
     return bool(_STOP_BEFORE_ADDRESS.search(display))
 
 
+def _normalize_ocr_city_name(city: str) -> str:
+    c = city.strip()
+    if not c:
+        return c
+    up = c.upper()
+    if up in ("ANAU", "SHANAU", "SHANU", "MHANAU"):
+        return "HANAU"
+    return _normalize_address_diacritics_from_latin_ocr(c)
+
+
 def _split_city_street_heuristic(text: str) -> list[str]:
     """``NJEMACKAHANAU`` / ``NSJEMACKAHANAU`` → ``NJEMAČKA, HANAU`` kad OCR spoji bez zareza."""
     s = text.strip()
@@ -117,7 +133,7 @@ def _split_city_street_heuristic(text: str) -> list[str]:
         return [*city_lines, street_n]
 
     m = re.match(
-        r"^(NJEMACKA|NJEMAČKA|GERMANY|DEUTSCHLAND)\s*,?\s*(.+)$",
+        r"^(NJEMACKA|NJEMAČKA|GERMANY|DEUTSCHLAND)(?:\s*,\s*|\s+)(.+)$",
         s,
         re.IGNORECASE,
     )
@@ -125,8 +141,20 @@ def _split_city_street_heuristic(text: str) -> list[str]:
         city = _normalize_address_diacritics_from_latin_ocr(m.group(1).strip())
         rest = _normalize_address_diacritics_from_latin_ocr(m.group(2).strip())
         if rest:
+            if "," in s:
+                return [f"{city}, {rest}"]
             return [city, rest]
         return [city]
+    # „NJEMACKAMHANAU“ / „NTEMACKASHANAU“ (OCR reže N ili ubaci SH).
+    m3 = re.match(
+        r"^N?T?J?EMACKA(?:M|SH?)?(HANAU|SHANAU|ANAU|[A-ZČĆŽŠĐ][A-ZČĆŽŠĐa-zčćžšđ\-]{2,})$",
+        s,
+        re.IGNORECASE,
+    )
+    if m3:
+        country = _normalize_address_diacritics_from_latin_ocr("NJEMACKA")
+        city = _normalize_ocr_city_name(m3.group(1))
+        return [f"{country}, {city}"]
     m2 = re.match(
         r"^(?:NS|N|S)?J?EMACKA(HANAU|[A-ZČĆŽŠĐ][A-ZČĆŽŠĐa-zčćžšđ\-]+)$",
         s,
@@ -134,7 +162,7 @@ def _split_city_street_heuristic(text: str) -> list[str]:
     )
     if m2:
         country = _normalize_address_diacritics_from_latin_ocr("NJEMACKA")
-        city = _normalize_address_diacritics_from_latin_ocr(m2.group(1))
+        city = _normalize_ocr_city_name(m2.group(1))
         return [f"{country}, {city}"]
     return [_normalize_address_diacritics_from_latin_ocr(s)]
 
@@ -250,6 +278,13 @@ def suggest_residence_address_from_items(
                 started = True
             break
         if not started and len(display) <= 2:
+            continue
+        split_parts = _split_city_street_heuristic(display)
+        if split_parts:
+            for part in split_parts:
+                if _is_plausible_address_line(part):
+                    lines_out.append(part)
+            started = True
             continue
         line = _normalize_address_diacritics_from_latin_ocr(display)
         if _is_plausible_address_line(line):

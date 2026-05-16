@@ -1,3 +1,4 @@
+from django.db.models import Q
 from django.utils.dateparse import parse_date
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
@@ -52,9 +53,10 @@ class RoomCalendarView(generics.ListAPIView):
     def get_queryset(self):
         room_id = self.kwargs["room_id"]
         qs = (
-            Reservation.objects.filter(room_id=room_id)
+            Reservation.objects.filter(units__room_id=room_id)
             .exclude(status=ReservationStatus.CANCELED)
-            .prefetch_related("guests")
+            .distinct()
+            .prefetch_related("guests", "units__room")
             .order_by("check_in_date", "id")
         )
 

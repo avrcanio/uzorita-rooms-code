@@ -1,22 +1,33 @@
 from django.contrib import admin
 
-from .models import DocumentScanLog, Guest, IDDocument, Reservation
+from .models import DocumentScanLog, Guest, IDDocument, Reservation, ReservationUnit
+
+
+class ReservationUnitInline(admin.TabularInline):
+    model = ReservationUnit
+    extra = 0
+    fields = ("sort_order", "room_name", "room_type", "room", "amount")
 
 
 @admin.register(Reservation)
 class ReservationAdmin(admin.ModelAdmin):
+    inlines = [ReservationUnitInline]
     list_display = (
         "id",
         "external_id",
+        "booker_name",
         "room_name",
         "check_in_date",
         "check_out_date",
         "status",
+        "booking_status",
+        "units_count",
         "currency",
         "total_amount",
+        "import_source",
     )
-    list_filter = ("status", "currency", "check_in_date")
-    search_fields = ("external_id", "room_name")
+    list_filter = ("status", "booking_status", "import_source", "currency", "check_in_date")
+    search_fields = ("external_id", "room_name", "booker_name", "booker_phone")
 
 
 @admin.register(Guest)

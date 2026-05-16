@@ -418,7 +418,10 @@ class PaddleDocumentScanView(APIView):
                             upscale=up if up in (2, 3) else 2,
                             use_otsu=otsu,
                         )
-                        crop_bytes = proc.preprocessed_jpeg
+                        if getattr(settings, "MRZ_CROP_BINARIZE", False):
+                            crop_bytes = proc.preprocessed_jpeg
+                        else:
+                            crop_bytes = proc.deskewed_jpeg
                         y0 = proc.crop_y0
                         dbg_paths = save_mrz_crop_debug_stages(
                             sample_path,

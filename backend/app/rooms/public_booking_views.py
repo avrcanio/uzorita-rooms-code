@@ -108,14 +108,18 @@ class PublicAvailabilityView(APIView):
         rooms = list(Room.objects.filter(is_active=True).select_related("room_type").order_by("code"))
         room_ids = [r.id for r in rooms]
 
-        overlaps = (
-            Reservation.objects.filter(room_id__in=room_ids)
-            .exclude(status=ReservationStatus.CANCELED)
-            .filter(check_in_date__lt=checkout, check_out_date__gt=checkin)
+        from reception.models import ReservationUnit
+
+        unavailable_ids = set(
+            ReservationUnit.objects.filter(room_id__in=room_ids)
+            .exclude(reservation__status=ReservationStatus.CANCELED)
+            .filter(
+                reservation__check_in_date__lt=checkout,
+                reservation__check_out_date__gt=checkin,
+            )
             .values_list("room_id", flat=True)
             .distinct()
         )
-        unavailable_ids = set(overlaps)
 
         rooms_payload = []
         available_rooms = []
@@ -257,9 +261,10 @@ class PublicRoomCalendarView(APIView):
         month_end = date(month_start.year, month_start.month, last_day) + timedelta(days=1)
 
         reservations = list(
-            Reservation.objects.filter(room_id=room.id)
+            Reservation.objects.filter(units__room_id=room.id)
             .exclude(status=ReservationStatus.CANCELED)
             .filter(check_in_date__lt=month_end, check_out_date__gt=month_start)
+            .distinct()
             .values("check_in_date", "check_out_date")
         )
 

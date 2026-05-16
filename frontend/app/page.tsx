@@ -7,11 +7,17 @@ import { useEffect, useMemo, useState } from "react";
 
 type ReservationStatus = "expected" | "checked_in" | "checked_out" | "canceled";
 
+type ReservationUnitLite = {
+  id: number;
+  room_code: string | null;
+};
+
 type Reservation = {
   id: number;
   external_id: string;
   room_name: string;
-  room: number | null;
+  units?: ReservationUnitLite[];
+  room_codes?: string[];
   check_in_date: string;
   check_out_date: string;
   status: ReservationStatus;
@@ -275,11 +281,19 @@ export default function Home() {
     return "border-brand-gold/35 bg-brand-gold/10 text-brand-cream";
   };
 
+  const reservationRoomCodes = (r: Reservation): string[] =>
+    r.room_codes?.filter(Boolean) ??
+    (r.units ?? []).map((u) => u.room_code).filter((code): code is string => Boolean(code));
+
   const filteredReservations = useMemo(() => {
     if (roomFilter === "all") return reservations;
-    if (roomFilter === "unassigned") return reservations.filter((r) => !r.room);
-    return reservations.filter((r) => r.room === roomFilter);
-  }, [reservations, roomFilter]);
+    if (roomFilter === "unassigned") {
+      return reservations.filter((r) => reservationRoomCodes(r).length === 0);
+    }
+    const room = roomById[roomFilter];
+    if (!room) return reservations;
+    return reservations.filter((r) => reservationRoomCodes(r).includes(room.code));
+  }, [reservations, roomFilter, roomById]);
 
   const logout = async () => {
     try {
@@ -428,6 +442,12 @@ export default function Home() {
                   <span>WhatsApp</span>
                 </a>
               ) : null}
+              <Link
+                href="/import"
+                className="rounded-full border border-brand-gold/40 bg-brand-gold/15 px-4 py-2 text-sm hover:bg-brand-gold/25"
+              >
+                Import
+              </Link>
               <div className="rounded-full border border-brand-gold/40 bg-brand-gold/15 px-4 py-2 text-sm">
                 {me ? `Korisnik: ${me.username}` : "Provjera prijave..."}
               </div>
@@ -610,7 +630,15 @@ export default function Home() {
 	                          </summary>
 	                          <ul className="space-y-3 px-4 pb-4">
 	                            {w.items.map((item) => {
-	                              const roomCode = item.room ? roomById[item.room]?.code : null;
+	                              const roomCodes =
+	                                item.room_codes?.filter(Boolean) ??
+	                                (item.units ?? [])
+	                                  .map((u) => u.room_code)
+	                                  .filter((c): c is string => Boolean(c));
+	                              const roomCode =
+	                                roomCodes.length > 1
+	                                  ? roomCodes.join("+")
+	                                  : roomCodes[0] ?? null;
 	                              const flag = flagIconClass(item.primary_guest_nationality_iso2);
 	                              return (
 	                                <li key={item.id}>

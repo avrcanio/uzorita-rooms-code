@@ -146,6 +146,7 @@ PADDLE_OCR_FILE_FIELD = env("PADDLE_OCR_FILE_FIELD", "file")
 PADDLE_OCR_REQUEST_FORMAT = env("PADDLE_OCR_REQUEST_FORMAT", "multipart")
 PADDLE_OCR_TIMEOUT_SECONDS = float(env("PADDLE_OCR_TIMEOUT_SECONDS", "90"))
 PADDLE_OCR_SCAN_MAX_BYTES = int(env("PADDLE_OCR_SCAN_MAX_BYTES", str(8 * 1024 * 1024)))
+BOOKING_XLS_IMPORT_MAX_BYTES = int(env("BOOKING_XLS_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
 # Drugi Paddle prolaz na donjem izrezu (MRZ) — smanjuje ultra-široka OCR polja.
 MRZ_OCR_SECOND_PASS = env_bool("MRZ_OCR_SECOND_PASS", default=True)
 # Donji izrez za MRZ drugi prolaz (ICAO: MRZ na dnu ID-1); 0.30–0.35.
@@ -155,6 +156,8 @@ MRZ_CROP_MERGE_MARGIN_PX = float(env("MRZ_CROP_MERGE_MARGIN_PX", "8"))
 # OpenCV: deskew + CLAHE + threshold + upscale prije drugog Paddle poziva.
 MRZ_CROP_UPSCALE = int(env("MRZ_CROP_UPSCALE", "2"))  # 2 ili 3
 MRZ_CROP_USE_OTSU = env_bool("MRZ_CROP_USE_OTSU", default=False)
+# CLAHE + adaptive threshold na cropu — loše s custom HR rec modelom na MRZ fontu; default deskew+upscale.
+MRZ_CROP_BINARIZE = env_bool("MRZ_CROP_BINARIZE", default=False)
 MRZ_CROP_DEBUG_IMAGES = env_bool("MRZ_CROP_DEBUG_IMAGES", default=False)
 # Nakon geometrijskog izreza: ako je duži rub veći, smanji crop (INTER_AREA) prije deskew/upscale.
 # Smanjuje RAM/CPU i timeout na originu (Cloudflare „invalid response“). 0 = isključeno.

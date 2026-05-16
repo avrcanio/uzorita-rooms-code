@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +12,24 @@ from rest_framework.test import APIClient
 from mrz.generator.td1 import TD1CodeGenerator
 from mrz.generator.td3 import TD3CodeGenerator
 
-from reception.models import DocumentScanLog, DocumentScanStatus, Guest, Reservation, ReservationStatus
+from reception.booking_xls_import import (
+    BookingXlsRow,
+    _split_guest_names,
+    import_booking_xls_bytes,
+    import_booking_xls_file,
+    parse_booking_xls,
+    parse_booking_xls_bytes,
+    upsert_reservation_from_xls_row,
+)
+from reception.models import (
+    DocumentScanLog,
+    DocumentScanStatus,
+    Guest,
+    ImportSource,
+    Reservation,
+    ReservationStatus,
+    ReservationUnit,
+)
 from reception.services.mrz_crop_postprocess import normalize_mrz_crop_paddle_items
 from reception.services.mrz_image_crop import (
     build_mrz_crop_for_paddle_second_pass,
@@ -36,50 +54,69 @@ class ReservationRoomOverlapValidationTests(TestCase):
         self.rt = RoomType.objects.create(code="RTEST", name_i18n={"en": "Test Room"})
         self.room = Room.objects.create(code="T1", room_type=self.rt)
 
-    def test_overlapping_reservations_on_same_room_are_blocked(self):
-        Reservation.objects.create(
-            external_id="A",
+    def _reservation_with_unit(self, *, external_id: str, status: str, start: date, end: date) -> Reservation:
+        reservation = Reservation.objects.create(
+            external_id=external_id,
+            room_name="Test Room",
+            check_in_date=start,
+            check_out_date=end,
+            status=status,
+        )
+        ReservationUnit.objects.create(
+            reservation=reservation,
+            sort_order=0,
             room_name="Test Room",
             room_type=self.rt,
             room=self.room,
-            check_in_date=date(2026, 6, 10),
-            check_out_date=date(2026, 6, 12),
-            status=ReservationStatus.EXPECTED,
         )
+        return reservation
 
-        r2 = Reservation(
+    def test_overlapping_units_on_same_room_are_blocked(self):
+        self._reservation_with_unit(
+            external_id="A",
+            status=ReservationStatus.EXPECTED,
+            start=date(2026, 6, 10),
+            end=date(2026, 6, 12),
+        )
+        reservation_b = Reservation.objects.create(
             external_id="B",
             room_name="Test Room",
-            room_type=self.rt,
-            room=self.room,
             check_in_date=date(2026, 6, 11),
             check_out_date=date(2026, 6, 13),
             status=ReservationStatus.EXPECTED,
+        )
+        unit_b = ReservationUnit(
+            reservation=reservation_b,
+            sort_order=0,
+            room_name="Test Room",
+            room_type=self.rt,
+            room=self.room,
         )
         with self.assertRaises(ValidationError):
-            r2.full_clean()
+            unit_b.full_clean()
 
     def test_canceled_reservation_does_not_block(self):
-        Reservation.objects.create(
+        self._reservation_with_unit(
             external_id="A",
-            room_name="Test Room",
-            room_type=self.rt,
-            room=self.room,
-            check_in_date=date(2026, 6, 10),
-            check_out_date=date(2026, 6, 12),
             status=ReservationStatus.CANCELED,
+            start=date(2026, 6, 10),
+            end=date(2026, 6, 12),
         )
-
-        r2 = Reservation(
+        reservation_b = Reservation.objects.create(
             external_id="B",
             room_name="Test Room",
-            room_type=self.rt,
-            room=self.room,
             check_in_date=date(2026, 6, 11),
             check_out_date=date(2026, 6, 13),
             status=ReservationStatus.EXPECTED,
         )
-        r2.full_clean()  # should not raise
+        unit_b = ReservationUnit(
+            reservation=reservation_b,
+            sort_order=0,
+            room_name="Test Room",
+            room_type=self.rt,
+            room=self.room,
+        )
+        unit_b.full_clean()
 
 
 class NormalizePaddleResponseTests(TestCase):
@@ -177,6 +214,59 @@ class MrzImageCropTests(TestCase):
         )
         texts = [m["text"] for m in merged]
         self.assertEqual(texts, ["TOP", "CLEANMRZLINE"])
+
+    def test_merge_keeps_full_when_line2_truncated_but_line1_good(self):
+        """Puni kadar I0HRV + skraćen red 2; crop bez line1 — zadrži puni (ne 101R7)."""
+        strip_y0 = 1132
+        full = [
+            {"text": "HEADER", "confidence": 0.99, "box": [[0.0, 50.0], [100.0, 50.0], [100.0, 70.0], [0.0, 70.0]]},
+            {
+                "text": "I0HRV119384087911528564544<<<<",
+                "confidence": 0.97,
+                "box": [[0.0, 1289.0], [2400.0, 1289.0], [2400.0, 1341.0], [0.0, 1341.0]],
+            },
+            {
+                "text": "7604234M3005121HRV<Z9",
+                "confidence": 0.95,
+                "box": [[0.0, 1423.0], [2400.0, 1423.0], [2400.0, 1497.0], [0.0, 1497.0]],
+            },
+        ]
+        crop = [
+            {"text": "101R719384187915856454727", "confidence": 0.81, "box": [[0.0, 10.0], [400.0, 10.0], [400.0, 40.0], [0.0, 40.0]]},
+        ]
+        merged = merge_fullframe_and_mrz_crop_items(
+            full, crop, full_height=1677, crop_y0=strip_y0, margin_px=8.0
+        )
+        texts = [m["text"] for m in merged]
+        self.assertIn("I0HRV119384087911528564544<<<<", texts)
+        self.assertNotIn("101R719384187915856454727", texts)
+
+    def test_merge_keeps_full_when_crop_line1_is_t01_garbage(self):
+        """CLAHE crop + custom rec: T01R4… vs puni kadar I0HRV — zadrži puni."""
+        strip_y0 = 1211
+        full = [
+            {"text": "HEADER", "confidence": 0.99, "box": [[0.0, 50.0], [100.0, 50.0], [100.0, 70.0], [0.0, 70.0]]},
+            {
+                "text": "I0HRV119384087911528564544<<<<",
+                "confidence": 0.97,
+                "box": [[0.0, 1289.0], [2400.0, 1289.0], [2400.0, 1341.0], [0.0, 1341.0]],
+            },
+            {
+                "text": "7604234M300511HRV<9",
+                "confidence": 0.95,
+                "box": [[0.0, 1423.0], [2400.0, 1423.0], [2400.0, 1497.0], [0.0, 1497.0]],
+            },
+        ]
+        crop = [
+            {"text": "T01R493840879585644422<<<<<<<<", "confidence": 0.81, "box": [[0.0, 10.0], [400.0, 10.0], [400.0, 40.0], [0.0, 40.0]]},
+            {"text": "7604274M300511RV<<<<<<<<<<<<<<", "confidence": 0.90, "box": [[0.0, 50.0], [400.0, 50.0], [400.0, 80.0], [0.0, 80.0]]},
+        ]
+        merged = merge_fullframe_and_mrz_crop_items(
+            full, crop, full_height=1794, crop_y0=strip_y0, margin_px=8.0
+        )
+        texts = [m["text"] for m in merged]
+        self.assertIn("I0HRV119384087911528564544<<<<", texts)
+        self.assertNotIn("T01R493840879585644422<<<<<<<<", texts)
 
     def test_merge_prefers_crop_when_fullframe_td1_line2_truncated(self):
         """Puni kadar prereže liniju 2 (visok conf); crop drugog prolaza ima punih 30 znakova."""
@@ -792,6 +882,33 @@ class AddressFromOcrTests(TestCase):
         self.assertEqual(r["address_lines"], ["NJEMAČKA, HANAU", "GÄRTNERSTRAẞE 44"])
         self.assertEqual(r["address"], "NJEMAČKA, HANAU, GÄRTNERSTRAẞE 44")
 
+    def test_ntemackashanau_ocr_prefix_split(self):
+        from reception.services.address_from_ocr import suggest_residence_address_from_items
+
+        items: list[dict[str, object]] = [
+            {"text": "NTEMACKASHANAU", "confidence": 0.93, "box": self._box(154.0, 225.0)},
+        ]
+        r = suggest_residence_address_from_items(items, mrz_strip_y0=900.0)
+        self.assertEqual(r["address_lines"], ["NJEMAČKA, HANAU"])
+
+    def test_gartnerstrasew_street_fix(self):
+        from reception.services.address_from_ocr import suggest_residence_address_from_items
+
+        items: list[dict[str, object]] = [
+            {"text": "GARTNERSTRASEW44", "confidence": 0.92, "box": self._box(237.0, 308.0)},
+        ]
+        r = suggest_residence_address_from_items(items, mrz_strip_y0=900.0)
+        self.assertEqual(r["address_lines"], ["GÄRTNERSTRAẞE 44"])
+
+    def test_njemackamhanau_split_country_city(self):
+        from reception.services.address_from_ocr import suggest_residence_address_from_items
+
+        items: list[dict[str, object]] = [
+            {"text": "NJEMACKAMHANAU", "confidence": 0.93, "box": self._box(154.0, 225.0)},
+        ]
+        r = suggest_residence_address_from_items(items, mrz_strip_y0=900.0)
+        self.assertEqual(r["address_lines"], ["NJEMAČKA, HANAU"])
+
     def test_strabe_suffix_normalized_to_strasse(self):
         from reception.services.address_from_ocr import suggest_residence_address_from_items
 
@@ -840,7 +957,6 @@ class PaddleDocumentScanViewTests(TestCase):
         self.res = Reservation.objects.create(
             external_id="paddle-scan-1",
             room_name="Room OCR",
-            room_type=self.rt,
             check_in_date=date(2026, 8, 1),
             check_out_date=date(2026, 8, 5),
             status=ReservationStatus.EXPECTED,
@@ -961,7 +1077,6 @@ class PaddleDocumentScanViewTests(TestCase):
         other = Reservation.objects.create(
             external_id="paddle-scan-2",
             room_name="Other",
-            room_type=self.rt,
             check_in_date=date(2026, 9, 1),
             check_out_date=date(2026, 9, 3),
             status=ReservationStatus.EXPECTED,
@@ -1070,7 +1185,6 @@ class PaddleDocumentScanFrontTests(TestCase):
         self.res = Reservation.objects.create(
             external_id="paddle-front-1",
             room_name="R1",
-            room_type=self.rt,
             check_in_date=date(2026, 8, 1),
             check_out_date=date(2026, 8, 5),
             status=ReservationStatus.EXPECTED,
@@ -1106,3 +1220,312 @@ class PaddleDocumentScanFrontTests(TestCase):
         viz = (resp.data.get("suggested_fields") or {}).get("viz_fields") or {}
         self.assertTrue(viz.get("document_number") or (viz.get("surname") and viz.get("given_names")))
         self.assertFalse(resp.data.get("mrz", {}).get("checksum_valid"))
+
+
+class BookingXlsImportTests(TestCase):
+    def _sample_row(self, **overrides) -> BookingXlsRow:
+        base = dict(
+            external_id="5307026805",
+            booker_name="Kumar, Jayachandar",
+            guest_names=["Jayachandar Kumar"],
+            check_in_date=date(2026, 5, 16),
+            check_out_date=date(2026, 5, 17),
+            booked_at=datetime(2026, 5, 3, 20, 34, 55),
+            booking_status="ok",
+            units_count=1,
+            persons_count=4,
+            adults_count=2,
+            children_count=2,
+            children_ages="0, 6",
+            total_amount=Decimal("92.65"),
+            currency="EUR",
+            commission_percent=Decimal("18"),
+            commission_amount=Decimal("16.677"),
+            payment_status="Naplata putem Booking.com-a",
+            payment_provider="",
+            notes="Quiet room please",
+            booker_country="CH",
+            travel_purpose="Razonoda",
+            booking_device="Mobitel",
+            room_name="Luxury Room Uzorita - R3",
+            nights_count=1,
+            canceled_at=None,
+            booker_address="",
+            booker_phone="",
+        )
+        base.update(overrides)
+        return BookingXlsRow(**base)
+
+    def test_upsert_creates_reservation_with_all_booking_fields(self):
+        row = self._sample_row()
+        result = upsert_reservation_from_xls_row(row)
+        self.assertTrue(result.created)
+        res = Reservation.objects.get(external_id="5307026805")
+        self.assertEqual(res.booker_name, "Kumar, Jayachandar")
+        self.assertEqual(res.booking_status, "ok")
+        self.assertEqual(res.status, ReservationStatus.EXPECTED)
+        self.assertEqual(res.total_amount, Decimal("92.65"))
+        self.assertEqual(res.units_count, 1)
+        self.assertEqual(res.notes, "Quiet room please")
+        self.assertEqual(res.import_source, ImportSource.BOOKING_XLS)
+        self.assertIsNotNone(res.imported_at)
+        primary = Guest.objects.get(reservation=res, is_primary=True)
+        self.assertEqual(primary.first_name, "Jayachandar")
+        self.assertEqual(primary.last_name, "Kumar")
+
+    def test_upsert_updates_same_external_id_without_duplicate(self):
+        row = self._sample_row()
+        upsert_reservation_from_xls_row(row)
+        row2 = self._sample_row(notes="Updated note")
+        result = upsert_reservation_from_xls_row(row2)
+        self.assertFalse(result.created)
+        self.assertTrue(result.updated)
+        self.assertFalse(result.skipped)
+        self.assertEqual(Reservation.objects.filter(external_id="5307026805").count(), 1)
+        self.assertEqual(Reservation.objects.get(external_id="5307026805").notes, "Updated note")
+
+    def test_extra_guests_are_not_removed_on_reimport(self):
+        row = self._sample_row()
+        upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="5307026805")
+        extra = Guest.objects.create(
+            reservation=res,
+            first_name="Manual",
+            last_name="Guest",
+            is_primary=False,
+        )
+        upsert_reservation_from_xls_row(row)
+        self.assertTrue(Guest.objects.filter(pk=extra.pk).exists())
+        self.assertEqual(res.guests.count(), 2)
+
+    def test_identical_reimport_is_skipped(self):
+        row = self._sample_row()
+        first = upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="5307026805")
+        imported_at = res.imported_at
+        second = upsert_reservation_from_xls_row(row)
+        res.refresh_from_db()
+        self.assertTrue(first.created)
+        self.assertTrue(second.skipped)
+        self.assertFalse(second.updated)
+        self.assertEqual(res.imported_at, imported_at)
+
+    def test_cancelled_by_guest_sets_canceled_status(self):
+        row = self._sample_row(booking_status="cancelled_by_guest")
+        upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="5307026805")
+        self.assertEqual(res.status, ReservationStatus.CANCELED)
+
+    def test_checked_in_status_not_overwritten_on_reimport(self):
+        row = self._sample_row()
+        upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="5307026805")
+        res.status = ReservationStatus.CHECKED_IN
+        res.save(update_fields=["status", "updated_at"])
+        row2 = self._sample_row(booking_status="cancelled_by_guest")
+        upsert_reservation_from_xls_row(row2)
+        res.refresh_from_db()
+        self.assertEqual(res.status, ReservationStatus.CHECKED_IN)
+        self.assertEqual(res.booking_status, "cancelled_by_guest")
+
+    def test_split_guest_names_by_comma_for_two_full_names(self):
+        names = _split_guest_names("SLADANA SKORIC,MARKO SKORIC")
+        self.assertEqual(len(names), 2)
+
+    def test_split_guest_names_keeps_last_first_format(self):
+        names = _split_guest_names("Kumar, Jayachandar")
+        self.assertEqual(names, ["Kumar, Jayachandar"])
+
+    def test_multi_guest_names_create_multiple_guests(self):
+        row = self._sample_row(
+            guest_names=["Chananya Sripongphichit", "Khanitha Poonowvarat"],
+            external_id="5192121426",
+        )
+        upsert_reservation_from_xls_row(row)
+        guests = Guest.objects.filter(reservation__external_id="5192121426").order_by("-is_primary")
+        self.assertEqual(guests.count(), 2)
+        self.assertTrue(guests.first().is_primary)
+
+    def test_multi_room_row_keeps_full_room_name(self):
+        row = self._sample_row(
+            external_id="5029796224",
+            units_count=3,
+            room_name="Luxury Room Uzorita - R3, Luxury Room Uzorita - R2, Luxury Room Uzorita - R1",
+        )
+        upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="5029796224")
+        self.assertIn("R3", res.room_name)
+        self.assertIn("R1", res.room_name)
+
+    def test_multi_room_creates_reservation_units(self):
+        from reception.models import ReservationUnit
+
+        row = self._sample_row(
+            external_id="6566035917",
+            units_count=2,
+            room_name="Luxury Room Uzorita - R2, Luxury Room Uzorita - R1",
+        )
+        upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="6566035917")
+        units = list(ReservationUnit.objects.filter(reservation=res).order_by("sort_order"))
+        self.assertEqual(len(units), 2)
+        self.assertIn("R2", units[0].room_name)
+        self.assertIn("R1", units[1].room_name)
+
+    def test_multi_room_sets_room_type_and_split_amount(self):
+        from reception.models import ReservationUnit
+        from rooms.models import Room, RoomType
+
+        rt_r1 = RoomType.objects.create(code="R1", name_i18n={"en": "King"})
+        rt_r3 = RoomType.objects.create(code="R3", name_i18n={"en": "Triple"})
+        Room.objects.create(code="K1", room_type=rt_r1, is_active=True)
+        Room.objects.create(code="T1", room_type=rt_r3, is_active=True)
+
+        row = self._sample_row(
+            external_id="6748210815-test",
+            units_count=2,
+            room_name="Luxury Room Uzorita - R1, Luxury Room Uzorita - R3",
+            total_amount=Decimal("159.80"),
+        )
+        upsert_reservation_from_xls_row(row)
+        res = Reservation.objects.get(external_id="6748210815-test")
+        units = list(ReservationUnit.objects.filter(reservation=res).order_by("sort_order"))
+        self.assertEqual(units[0].room_type_id, rt_r1.id)
+        self.assertEqual(units[1].room_type_id, rt_r3.id)
+        self.assertEqual(units[0].room_id, Room.objects.get(code="K1").id)
+        self.assertEqual(units[0].amount, Decimal("79.90"))
+        self.assertEqual(units[1].amount, Decimal("79.90"))
+
+    def test_parse_real_prijava_file_if_present(self):
+        path = Path("/opt/stacks/uzorita/Prijava")
+        if not path.is_file():
+            self.skipTest("Prijava xls fixture not available")
+        rows = parse_booking_xls(str(path))
+        self.assertGreaterEqual(len(rows), 20)
+        first = rows[0]
+        self.assertEqual(first.external_id, "5307026805")
+        self.assertEqual(first.currency, "EUR")
+
+    def test_dry_run_import_counts(self):
+        path = Path("/opt/stacks/uzorita/Prijava")
+        if not path.is_file():
+            self.skipTest("Prijava xls fixture not available")
+        stats = import_booking_xls_file(str(path), dry_run=True)
+        self.assertEqual(
+            stats["total"],
+            stats["created"] + stats["updated"] + stats["skipped"],
+        )
+
+
+class EnsureReservationUnitsCommandTests(TestCase):
+    def test_creates_units_from_room_name(self):
+        reservation = Reservation.objects.create(
+            external_id="ensure-units-1",
+            room_name="Luxury Room Uzorita - R2, Luxury Room Uzorita - R1",
+            check_in_date=date(2026, 7, 1),
+            check_out_date=date(2026, 7, 3),
+            status=ReservationStatus.EXPECTED,
+        )
+        self.assertEqual(reservation.units.count(), 0)
+
+        from django.core.management import call_command
+
+        call_command("ensure_reservation_units", external_id="ensure-units-1")
+
+        units = list(reservation.units.order_by("sort_order"))
+        self.assertEqual(len(units), 2)
+        self.assertIn("R2", units[0].room_name)
+        self.assertIn("R1", units[1].room_name)
+
+
+class BookingXlsImportApiTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("xls_import_api", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+
+    def _prijava_bytes(self) -> bytes | None:
+        path = Path("/opt/stacks/uzorita/Prijava")
+        if not path.is_file():
+            return None
+        return path.read_bytes()
+
+    def test_requires_authentication(self):
+        client = APIClient()
+        response = client.post("/api/reception/booking-xls-import/")
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_rejects_empty_upload(self):
+        response = self.client.post("/api/reception/booking-xls-import/", {}, format="multipart")
+        self.assertEqual(response.status_code, 400)
+
+    def test_rejects_non_xls_extension(self):
+        response = self.client.post(
+            "/api/reception/booking-xls-import/",
+            {
+                "files": SimpleUploadedFile("notes.txt", b"not xls", content_type="text/plain"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_dry_run_does_not_change_database(self):
+        content = self._prijava_bytes()
+        if content is None:
+            self.skipTest("Prijava xls fixture not available")
+
+        before = Reservation.objects.count()
+        response = self.client.post(
+            "/api/reception/booking-xls-import/",
+            {
+                "files": SimpleUploadedFile(
+                    "Prijava.xls",
+                    content,
+                    content_type="application/vnd.ms-excel",
+                ),
+                "dry_run": "true",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Reservation.objects.count(), before)
+        self.assertIn("summary", response.data)
+        self.assertIn("files", response.data)
+        self.assertTrue(response.data["dry_run"])
+        self.assertGreater(response.data["summary"]["total"], 0)
+
+    def test_import_returns_per_file_stats(self):
+        content = self._prijava_bytes()
+        if content is None:
+            self.skipTest("Prijava xls fixture not available")
+
+        response = self.client.post(
+            "/api/reception/booking-xls-import/",
+            {
+                "files": SimpleUploadedFile(
+                    "Prijava.xls",
+                    content,
+                    content_type="application/vnd.ms-excel",
+                ),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["dry_run"])
+        self.assertEqual(len(response.data["files"]), 1)
+        self.assertGreater(
+            response.data["summary"]["created"]
+            + response.data["summary"]["updated"]
+            + response.data["summary"]["skipped"],
+            0,
+        )
+
+    def test_parse_booking_xls_bytes_matches_file_parser(self):
+        content = self._prijava_bytes()
+        if content is None:
+            self.skipTest("Prijava xls fixture not available")
+
+        from_path = parse_booking_xls("/opt/stacks/uzorita/Prijava")
+        from_bytes = parse_booking_xls_bytes(content)
+        self.assertEqual(len(from_path), len(from_bytes))
+        self.assertEqual(from_path[0].external_id, from_bytes[0].external_id)

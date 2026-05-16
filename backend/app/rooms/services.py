@@ -30,6 +30,22 @@ def preferred_room_code_from_parsed_room_name(text: str | None) -> str | None:
     return None
 
 
+def resolve_room_type_from_parsed_room_name(text: str | None) -> RoomType | None:
+    """Resolve room type from alias text or Booking/Rentlio R1/R2/R3 suffix."""
+    rt = resolve_room_type_from_text(text)
+    if rt:
+        return rt
+    preferred_code = preferred_room_code_from_parsed_room_name(text)
+    if not preferred_code:
+        return None
+    room = (
+        Room.objects.filter(code=str(preferred_code).strip().upper(), is_active=True)
+        .select_related("room_type")
+        .first()
+    )
+    return room.room_type if room else None
+
+
 def resolve_room_type_from_text(text: str | None) -> RoomType | None:
     if not text:
         return None
@@ -54,7 +70,9 @@ def resolve_room_type_from_text(text: str | None) -> RoomType | None:
 
 
 def canonical_room_info(*, parsed_room_name: str | None, fallback_room_name: str | None) -> tuple[RoomType | None, str]:
-    rt = resolve_room_type_from_text(parsed_room_name) or resolve_room_type_from_text(fallback_room_name)
+    rt = resolve_room_type_from_parsed_room_name(parsed_room_name) or resolve_room_type_from_parsed_room_name(
+        fallback_room_name
+    )
     if rt:
         return (rt, rt.get_i18n_text("name_i18n", "en") or rt.code)
     return (None, (parsed_room_name or fallback_room_name or "Unknown").strip() or "Unknown")

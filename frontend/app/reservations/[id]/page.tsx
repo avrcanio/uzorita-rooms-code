@@ -15,10 +15,19 @@ type Guest = {
   document_number?: string;
 };
 
+type ReservationUnit = {
+  id: number;
+  sort_order: number;
+  room_name: string;
+  room: number | null;
+  room_code: string | null;
+};
+
 type Reservation = {
   id: number;
   external_id: string;
   room_name: string;
+  units?: ReservationUnit[];
   check_in_date: string;
   check_out_date: string;
   status: ReservationStatus;
@@ -221,8 +230,23 @@ export default function ReservationDetailsPage() {
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-brand-gold/20 bg-black/30 p-4">
-                  <p className="text-sm text-brand-cream/70">Soba</p>
-                  <p className="mt-1 font-medium">{reservation.room_name}</p>
+                  <p className="text-sm text-brand-cream/70">
+                    {reservation.units && reservation.units.length > 1 ? "Sobe" : "Soba"}
+                  </p>
+                  {reservation.units && reservation.units.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
+                      {reservation.units.map((unit) => (
+                        <li key={unit.id} className="font-medium">
+                          {unit.room_name}
+                          {unit.room_code ? (
+                            <span className="ml-2 font-mono text-sm text-brand-gold">({unit.room_code})</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 font-medium">{reservation.room_name}</p>
+                  )}
                 </div>
                 <div className="rounded-xl border border-brand-gold/20 bg-black/30 p-4">
                   <p className="text-sm text-brand-cream/70">Status</p>

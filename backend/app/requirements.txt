@@ -6,3 +6,4 @@ Pillow==10.4.0
 opencv-python-headless==4.10.0.84
 httpx==0.28.1
 mrz==0.6.2
+xlrd==2.0.1

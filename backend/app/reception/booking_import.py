@@ -5,10 +5,9 @@ from datetime import date
 
 from django.db import transaction
 
-from reception.models import Guest, Reservation, ReservationStatus
-from rooms.allocation import assign_room_for_reservation
-from rooms.models import RoomType
-
+from reception.models import Guest, ImportSource, Reservation, ReservationStatus
+from reception.reservation_units import sync_reservation_units
+from rooms.allocation import assign_rooms_for_reservation
 
 @dataclass(frozen=True)
 class ImportResult:
@@ -32,16 +31,16 @@ def upsert_reservation_from_booking_payload(
     *,
     external_id: str,
     room_name: str,
-    room_type: RoomType | None,
     check_in_date: date,
     check_out_date: date,
     status: str,
     guest_full_name: str | None,
     guest_email: str | None,
     guest_nationality_iso2: str | None = None,
-    preferred_room_code: str | None = None,
     total_amount,
     currency: str | None,
+    import_source: str | None = None,
+    sync_units: bool = True,
 ) -> ImportResult:
     reservation, _created = Reservation.objects.get_or_create(
         external_id=external_id,
@@ -57,9 +56,6 @@ def upsert_reservation_from_booking_payload(
     if reservation.room_name != room_name:
         reservation.room_name = room_name
         changed = True
-    if reservation.room_type_id != (room_type.id if room_type else None):
-        reservation.room_type = room_type
-        changed = True
     if reservation.check_in_date != check_in_date:
         reservation.check_in_date = check_in_date
         changed = True
@@ -74,6 +70,9 @@ def upsert_reservation_from_booking_payload(
         changed = True
     if currency and reservation.currency != currency:
         reservation.currency = currency
+        changed = True
+    if import_source and reservation.import_source != import_source:
+        reservation.import_source = import_source
         changed = True
     if changed:
         reservation.save()
@@ -113,9 +112,8 @@ def upsert_reservation_from_booking_payload(
                 primary.save()
         primary_guest_id = primary.id
 
-    # Try to assign a physical room unit (K1/K2/D1/T1) based on date range.
-    # If a preferred room code was parsed (R1/R2/R3 mapping), prefer that unit.
-    assign_room_for_reservation(reservation_id=reservation.id, preferred_room_code=preferred_room_code)
+    sync_reservation_units(reservation=reservation, room_name=room_name)
+    assign_rooms_for_reservation(reservation_id=reservation.id)
 
     return ImportResult(reservation_id=reservation.id, primary_guest_id=primary_guest_id)
 
