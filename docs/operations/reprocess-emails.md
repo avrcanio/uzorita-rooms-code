@@ -32,9 +32,9 @@ docker compose run --rm django sh -lc "pip install --no-cache-dir -r requirement
 ```
 
 ## Kad je potrebno restartati worker
-`uzorita-booking-worker` je long-running proces (loop). Ako promijeniš python kod parsera/mappinga:
+`uzorita-celery-worker` učitava task kod pri restartu. Ako promijeniš python kod parsera/mappinga:
 ```bash
 cd /opt/stacks/uzorita/rooms/code/backend
-docker compose restart booking-worker
+docker compose restart celery-worker celery-beat
 ```
 

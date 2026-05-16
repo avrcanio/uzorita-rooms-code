@@ -10,6 +10,7 @@ backend/app/id_docs/
 backend/app/media/
 backend/app/.venv/
 backend/app/db.sqlite3
+backend/app/celerybeat-schedule
 
 # Booking.com XLS exports (local import fixtures, not source)
 backend/app/Prijava

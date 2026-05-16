@@ -54,9 +54,19 @@ Dokument za tehničke odluke vezane uz backend.
 - Odluka: `LANGUAGE_CODE=hr` i `TIME_ZONE=Europe/Zagreb`.
 - Razlog: operativni korisnici su lokalni i UI treba biti na hrvatskom jeziku sa lokalnim vremenom.
 
-### 2026-02-13 - Mail sync raspored preko cron-a
-- Odluka: umjesto Celery-ja za MVP koristimo cron ingest svake 2 minute.
-- Razlog: jednostavnije i brze operativno podizanje bez dodatne queue infrastrukture.
+### 2026-02-13 - Mail sync raspored preko cron-a (superseded)
+- Odluka (MVP): umjesto Celery-ja koristili smo `run_booking_pipeline` petlju u `booking-worker`.
+- Superseded: vidi 2026-05-16 — Celery + infra-redis.
+
+### 2026-05-16 - Celery + shared infra-redis
+- Odluka: booking email pipeline i iCal sync preko Celery workera/beat-a; broker `redis://infra-redis:6379/1`.
+- Razlog: isti uzorak kao Mozart, pouzdaniji retry/raspored, bez host-mode petlje.
+- Napomena: `run_booking_pipeline` ostaje za ručni `--once` debug.
+
+### 2026-05-16 - Django na `hetzner_net` + `proxy` (bez host mode)
+- Odluka: `uzorita-django` na `hetzner_net` (postgis, infra-redis, OCR) i `proxy` (Traefik labels).
+- Razlog: `postgis` i `infra-redis` nisu na host loopbacku iz bridge mreže; Traefik gađa kontejner direktno.
+- Env: `DB_HOST=postgis`, `PADDLE_OCR_BASE_URL=http://paddle-ocr-fastapi:8866`.
 
 ### 2026-02-13 - OCR provider je standardiziran na Microblink
 - Odluka: aktivni OCR provider u backendu je samo `microblink`.

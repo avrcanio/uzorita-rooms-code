@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
 
+from celery.schedules import crontab
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -202,3 +204,24 @@ if SCAN_OCR_TRACE_LOG:
     }
 else:
     LOGGING = {}
+
+# Celery (broker: infra-redis DB 1 on hetzner_net)
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://infra-redis:6379/1")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TIMEZONE = "Europe/Zagreb"
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+
+CELERY_BEAT_SCHEDULE = {
+    "booking-email-pipeline": {
+        "task": "communications.tasks.run_booking_email_pipeline_task",
+        "schedule": crontab(minute="*/2"),
+        "kwargs": {"fetch_limit": 50, "process_limit": 50},
+    },
+    "booking-sync-ical": {
+        "task": "reception.tasks.sync_booking_ical_task",
+        "schedule": crontab(minute="*/30"),
+        "kwargs": {"feed": "all"},
+    },
+}

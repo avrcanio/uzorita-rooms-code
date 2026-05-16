@@ -25,6 +25,18 @@ class Command(BaseCommand):
             default=False,
             help="Run a single iteration and exit (useful for cron).",
         )
+        parser.add_argument(
+            "--ical-interval",
+            type=int,
+            default=1800,
+            help="Seconds between Booking iCal sync runs (default: 1800 = 30 min).",
+        )
+        parser.add_argument(
+            "--skip-ical",
+            action="store_true",
+            default=False,
+            help="Disable periodic sync_booking_ical in the worker loop.",
+        )
 
     def handle(self, *args, **options):
         interval = max(5, int(options["interval"] or 60))
@@ -34,6 +46,9 @@ class Command(BaseCommand):
         dry_run = bool(options["dry_run"])
         once = bool(options["once"])
         only_pending = not bool(options["include_non_pending"])
+        skip_ical = bool(options["skip_ical"])
+        ical_interval = max(60, int(options["ical_interval"] or 1800))
+        last_ical_sync = 0.0
 
         while True:
             try:
@@ -53,6 +68,16 @@ class Command(BaseCommand):
                 call_command(*cmd_args)
             except Exception as e:
                 self.stderr.write(f"booking-pipeline: process failed: {e}")
+
+            if not skip_ical:
+                now = time.time()
+                if now - last_ical_sync >= ical_interval:
+                    try:
+                        self.stdout.write("booking-pipeline: sync_booking_ical ...")
+                        call_command("sync_booking_ical", feed="all")
+                        last_ical_sync = now
+                    except Exception as e:
+                        self.stderr.write(f"booking-pipeline: ical sync failed: {e}")
 
             if once:
                 return

@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 from django.core.exceptions import ValidationError
 
@@ -17,6 +19,7 @@ class BookingChannelStatus(models.TextChoices):
 class ImportSource(models.TextChoices):
     BOOKING_XLS = "booking_xls", "Booking XLS"
     BOOKING_EMAIL = "booking_email", "Booking email"
+    BOOKING_ICAL = "booking_ical", "Booking iCal"
 
 
 class Reservation(models.Model):
@@ -274,3 +277,37 @@ class DocumentScanLog(models.Model):
 
     def __str__(self) -> str:
         return f"Scan {self.method or '?'} {self.status} #{self.id}"
+
+
+class BookingIcalFeed(models.Model):
+    """Booking.com iCal feed configuration (one row per channel listing, e.g. R1)."""
+
+    code = models.CharField(max_length=32, unique=True)
+    room_type = models.ForeignKey(
+        "rooms.RoomType",
+        on_delete=models.PROTECT,
+        related_name="booking_ical_feeds",
+    )
+    booking_listing_name = models.CharField(max_length=256)
+    export_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    import_url = models.URLField(max_length=2048, blank=True)
+    last_import_at = models.DateTimeField(null=True, blank=True)
+    last_import_etag = models.CharField(max_length=256, blank=True)
+    min_occupied_units_to_block = models.PositiveSmallIntegerField(
+        default=2,
+        help_text="Export blocks Booking when at least this many physical rooms are occupied (R1: 2 = K1+K2).",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Booking iCal feed"
+        verbose_name_plural = "Booking iCal feeds"
+
+    def __str__(self) -> str:
+        return f"{self.code} ({self.booking_listing_name})"
+
+    def regenerate_export_token(self) -> None:
+        self.export_token = uuid.uuid4()
+        self.save(update_fields=["export_token", "updated_at"])

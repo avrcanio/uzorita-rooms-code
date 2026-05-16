@@ -1,6 +1,6 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 
-from .models import DocumentScanLog, Guest, IDDocument, Reservation, ReservationUnit
+from .models import BookingIcalFeed, DocumentScanLog, Guest, IDDocument, Reservation, ReservationUnit
 
 
 class ReservationUnitInline(admin.TabularInline):
@@ -59,6 +59,29 @@ class IDDocumentAdmin(admin.ModelAdmin):
     list_display = ("id", "guest", "verified_at", "verified_by", "created_at")
     list_filter = ("verified_at",)
     search_fields = ("guest__first_name", "guest__last_name", "image_path")
+
+
+@admin.register(BookingIcalFeed)
+class BookingIcalFeedAdmin(admin.ModelAdmin):
+    list_display = (
+        "code",
+        "booking_listing_name",
+        "room_type",
+        "is_active",
+        "last_import_at",
+        "min_occupied_units_to_block",
+    )
+    list_filter = ("is_active", "room_type")
+    readonly_fields = ("export_token", "last_import_at", "last_import_etag", "created_at", "updated_at")
+    actions = ["regenerate_export_token"]
+
+    @admin.action(description="Regenerate export token (invalidates old Booking import URL)")
+    def regenerate_export_token(self, request, queryset):
+        count = 0
+        for feed in queryset:
+            feed.regenerate_export_token()
+            count += 1
+        self.message_user(request, f"Regenerated export token for {count} feed(s).", messages.SUCCESS)
 
 
 @admin.register(DocumentScanLog)

@@ -7,3 +7,6 @@ opencv-python-headless==4.10.0.84
 httpx==0.28.1
 mrz==0.6.2
 xlrd==2.0.1
+icalendar==6.1.0
+celery>=5.4,<6
+redis>=5.0,<6

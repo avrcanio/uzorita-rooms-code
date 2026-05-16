@@ -1,6 +1,19 @@
-# Napomena: `network_mode: host` za sve servise koji trebaju Postgres na 127.0.0.1 hosta
-# i interni OCR — izbjegava bridge + host.docker.internal + pg_hba prilagodbe.
-# Django → OCR: http://127.0.0.1:8866 (uvicorn na host mreži).
+# Django, Celery, and OCR on hetzner_net (postgis, infra-redis).
+# Django also on proxy for Traefik (rooms.uzorita.hr API/admin).
+
+x-uzorita-backend-env: &uzorita-backend-env
+  DJANGO_SETTINGS_MODULE: config.settings.dev
+  DJANGO_DEBUG: "1"
+  DJANGO_ALLOWED_HOSTS: "*"
+  DB_ENGINE: django.db.backends.postgresql
+  DB_HOST: postgis
+  DB_PORT: "5432"
+  CELERY_BROKER_URL: redis://infra-redis:6379/1
+  CELERY_RESULT_BACKEND: redis://infra-redis:6379/1
+  PADDLE_OCR_BASE_URL: http://paddle-ocr-fastapi:8866
+
+x-uzorita-backend-volumes: &uzorita-backend-volumes
+  - ./app:/app
 
 services:
   django:
@@ -14,52 +27,72 @@ services:
     env_file:
       - .env
     environment:
-      DJANGO_DEBUG: "1"
-      DJANGO_ALLOWED_HOSTS: "*"
-      DB_ENGINE: django.db.backends.postgresql
-      DB_HOST: 127.0.0.1
-      DB_PORT: "5432"
-    volumes:
-      - ./app:/app
-    network_mode: host
+      <<: *uzorita-backend-env
+    volumes: *uzorita-backend-volumes
+    networks:
+      - hetzner_net
+      - proxy
     depends_on:
       paddle-ocr-fastapi:
         condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.rooms-backend.rule=Host(`rooms.uzorita.hr`) && (PathPrefix(`/admin`) || PathPrefix(`/reception`) || PathPrefix(`/api`) || PathPrefix(`/health`) || PathPrefix(`/static`) || PathPrefix(`/favicon.ico`) || PathPrefix(`/logo.png`))
+      - traefik.http.routers.rooms-backend.entrypoints=websecure
+      - traefik.http.routers.rooms-backend.tls=true
+      - traefik.http.routers.rooms-backend.tls.certresolver=le
+      - traefik.http.routers.rooms-backend.priority=200
+      - traefik.http.services.rooms-backend.loadbalancer.server.port=8000
 
-  booking-worker:
+  celery-worker:
     image: python:3.12-slim
-    container_name: uzorita-booking-worker
+    container_name: uzorita-celery-worker
     working_dir: /app
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
       python manage.py migrate &&
-      python manage.py run_booking_pipeline --interval 60 --mark-seen"
+      celery -A config worker -l info --concurrency=2"
     env_file:
       - .env
     environment:
-      DJANGO_DEBUG: "1"
-      DJANGO_ALLOWED_HOSTS: "*"
-      DB_ENGINE: django.db.backends.postgresql
-      DB_HOST: 127.0.0.1
-      DB_PORT: "5432"
-    volumes:
-      - ./app:/app
-    network_mode: host
+      <<: *uzorita-backend-env
+    volumes: *uzorita-backend-volumes
+    networks:
+      - hetzner_net
+    restart: unless-stopped
+
+  celery-beat:
+    image: python:3.12-slim
+    container_name: uzorita-celery-beat
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      python manage.py migrate &&
+      celery -A config beat -l info"
+    env_file:
+      - .env
+    environment:
+      <<: *uzorita-backend-env
+    volumes: *uzorita-backend-volumes
+    networks:
+      - hetzner_net
     restart: unless-stopped
 
   paddle-ocr-fastapi:
     build:
       context: ../ocr_service
-    network_mode: host
+    container_name: paddle-ocr-fastapi
     restart: unless-stopped
     env_file:
       - .env
-    # Nakon train+export: /opt/stacks/PaddleOCR/output/hr_id_rec_infer mora postojati
     environment:
       PADDLEOCR_REC_MODEL_DIR: /models/hr_id_rec_infer
       PADDLEOCR_CPU_THREADS: "16"
     volumes:
       - /opt/stacks/PaddleOCR/output/hr_id_rec_infer:/models/hr_id_rec_infer:ro
+    networks:
+      - hetzner_net
     healthcheck:
       test:
         [
@@ -72,3 +105,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 180s
+
+networks:
+  hetzner_net:
+    external: true
+  proxy:
+    external: true
