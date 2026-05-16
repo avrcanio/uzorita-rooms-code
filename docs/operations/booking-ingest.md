@@ -19,6 +19,7 @@ Bitno:
 - `IMAP_PORT`
 - `IMAP_USE_SSL`
 - `IMAP_FOLDER` (default `INBOX`)
+- `IMAP_CONNECT_HOST=mailserver` + `IMAP_TLS_SERVERNAME=mail.finestar.hr` (Celery na `hetzner_net`)
 - `CELERY_BROKER_URL=redis://infra-redis:6379/1`
 - `DB_HOST=postgis` (hetzner_net)
 
