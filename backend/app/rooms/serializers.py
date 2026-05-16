@@ -86,6 +86,7 @@ class RoomSerializer(serializers.ModelSerializer):
 class RoomReservationSerializer(serializers.ModelSerializer):
     primary_guest_name = serializers.SerializerMethodField()
     primary_guest_nationality_iso2 = serializers.SerializerMethodField()
+    room_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -99,6 +100,11 @@ class RoomReservationSerializer(serializers.ModelSerializer):
             "primary_guest_name",
             "primary_guest_nationality_iso2",
         )
+
+    def get_room_name(self, obj) -> str:
+        from reception.reservation_units import joined_room_names
+
+        return joined_room_names(obj)
 
     def get_primary_guest_name(self, obj):
         primary = next((g for g in obj.guests.all() if g.is_primary), None)

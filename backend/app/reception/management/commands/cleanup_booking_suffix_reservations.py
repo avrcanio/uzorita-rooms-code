@@ -90,10 +90,17 @@ class Command(BaseCommand):
             if only_id:
                 base_qs = base_qs.filter(Q(external_id=only_id) | Q(external_id__startswith=f"{only_id}-"))
             base_qs = base_qs.exclude(external_id__regex=r"^.+-\d+$")
-            for reservation in base_qs:
-                if "," not in (reservation.room_name or "") and (reservation.units_count or 1) <= 1:
+            for reservation in base_qs.prefetch_related("units"):
+                unit_count = reservation.units.count()
+                expected = reservation.units_count or 1
+                if expected <= 1 or unit_count >= expected:
                     continue
-                sync_reservation_units(reservation=reservation, room_name=reservation.room_name)
+                joined = ", ".join(
+                    u.room_name for u in reservation.units.order_by("sort_order", "id") if u.room_name
+                )
+                if not joined:
+                    continue
+                sync_reservation_units(reservation=reservation, room_name=joined)
                 assign_rooms_for_reservation(reservation_id=reservation.id)
                 synced += 1
                 self.stdout.write(f"synced units for {reservation.external_id}")

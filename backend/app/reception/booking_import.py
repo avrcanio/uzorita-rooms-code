@@ -45,7 +45,6 @@ def upsert_reservation_from_booking_payload(
     reservation, _created = Reservation.objects.get_or_create(
         external_id=external_id,
         defaults={
-            "room_name": room_name,
             "check_in_date": check_in_date,
             "check_out_date": check_out_date,
             "status": status,
@@ -53,9 +52,6 @@ def upsert_reservation_from_booking_payload(
     )
 
     changed = False
-    if reservation.room_name != room_name:
-        reservation.room_name = room_name
-        changed = True
     if reservation.check_in_date != check_in_date:
         reservation.check_in_date = check_in_date
         changed = True

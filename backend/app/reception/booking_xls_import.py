@@ -325,8 +325,6 @@ def row_matches_reservation(
 ) -> bool:
     if reservation.external_id != row.external_id:
         return False
-    if reservation.room_name != row.room_name:
-        return False
     if reservation.check_in_date != row.check_in_date:
         return False
     if reservation.check_out_date != row.check_out_date:
@@ -549,7 +547,6 @@ def upsert_reservation_from_xls_row(row: BookingXlsRow) -> XlsImportResult:
     reservation, created = Reservation.objects.get_or_create(
         external_id=row.external_id,
         defaults={
-            "room_name": row.room_name,
             "check_in_date": row.check_in_date,
             "check_out_date": row.check_out_date,
             "status": new_operational_status,
@@ -560,7 +557,6 @@ def upsert_reservation_from_xls_row(row: BookingXlsRow) -> XlsImportResult:
         },
     )
 
-    reservation.room_name = row.room_name
     reservation.check_in_date = row.check_in_date
     reservation.check_out_date = row.check_out_date
     reservation.total_amount = row.total_amount

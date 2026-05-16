@@ -21,7 +21,6 @@ class ImportSource(models.TextChoices):
 
 class Reservation(models.Model):
     external_id = models.CharField(max_length=128, unique=True)
-    room_name = models.CharField(max_length=512)
     check_in_date = models.DateField()
     check_out_date = models.DateField()
     status = models.CharField(
@@ -66,7 +65,12 @@ class Reservation(models.Model):
         verbose_name_plural = "Rezervacije"
 
     def __str__(self) -> str:
-        return f"{self.external_id} ({self.room_name})"
+        from reception.reservation_units import joined_room_names
+
+        label = joined_room_names(self)
+        if label:
+            return f"{self.external_id} ({label})"
+        return str(self.external_id)
 
     def clean(self):
         super().clean()

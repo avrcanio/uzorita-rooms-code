@@ -16,7 +16,6 @@ class ReservationAdmin(admin.ModelAdmin):
         "id",
         "external_id",
         "booker_name",
-        "room_name",
         "check_in_date",
         "check_out_date",
         "status",
@@ -27,7 +26,7 @@ class ReservationAdmin(admin.ModelAdmin):
         "import_source",
     )
     list_filter = ("status", "booking_status", "import_source", "currency", "check_in_date")
-    search_fields = ("external_id", "room_name", "booker_name", "booker_phone")
+    search_fields = ("external_id", "booker_name", "booker_phone", "units__room_name")
 
 
 @admin.register(Guest)

@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from reception.reservation_units import joined_room_names
+
 from .models import Guest, Reservation, ReservationUnit
 
 
@@ -41,6 +43,7 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
     primary_guest_name = serializers.SerializerMethodField()
     primary_guest_nationality_iso2 = serializers.SerializerMethodField()
     room_codes = serializers.SerializerMethodField()
+    room_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -98,6 +101,9 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
             if unit.room_id and unit.room:
                 codes.append(unit.room.code)
         return codes
+
+    def get_room_name(self, obj) -> str:
+        return joined_room_names(obj)
 
 
 class GuestDetailSerializer(serializers.ModelSerializer):

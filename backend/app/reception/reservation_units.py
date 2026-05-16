@@ -41,6 +41,15 @@ def apply_unit_amounts_from_total(
             unit.save(update_fields=["amount", "updated_at"])
 
 
+def joined_room_names(
+    reservation: Reservation,
+    *,
+    units: list[ReservationUnit] | None = None,
+) -> str:
+    unit_list = units if units is not None else list(reservation.units.order_by("sort_order", "id"))
+    return ", ".join(u.room_name for u in unit_list if u.room_name)
+
+
 def split_room_names(room_name: str) -> list[str]:
     if not room_name:
         return []
@@ -97,9 +106,7 @@ def sync_reservation_units(*, reservation: Reservation, room_name: str) -> list[
         kept_ids.append(unit.id)
 
     reservation.units.exclude(id__in=kept_ids).delete()
-    units = list(reservation.units.order_by("sort_order", "id"))
-    sync_reservation_denormalized_room_name(reservation, units=units)
-    return units
+    return list(reservation.units.order_by("sort_order", "id"))
 
 
 def unit_specs_snapshot(reservation: Reservation) -> tuple[tuple[int, str, int | None], ...]:
@@ -114,20 +121,6 @@ def unit_specs_from_room_name(room_name: str) -> tuple[tuple[int, str, int | Non
         (spec.sort_order, spec.room_name, spec.room_type_id)
         for spec in build_unit_specs(room_name)
     )
-
-
-def sync_reservation_denormalized_room_name(
-    reservation: Reservation,
-    *,
-    units: list[ReservationUnit] | None = None,
-) -> None:
-    unit_list = units if units is not None else list(reservation.units.order_by("sort_order", "id"))
-    if not unit_list:
-        return
-    joined = ", ".join(u.room_name for u in unit_list)
-    if reservation.room_name != joined:
-        reservation.room_name = joined
-        reservation.save(update_fields=["room_name", "updated_at"])
 
 
 def preferred_codes_for_units(reservation: Reservation) -> list[str | None]:

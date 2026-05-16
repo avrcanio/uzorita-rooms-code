@@ -3,7 +3,6 @@ from __future__ import annotations
 from django.db import transaction
 
 from reception.models import Reservation, ReservationStatus, ReservationUnit
-from reception.reservation_units import sync_reservation_denormalized_room_name, sync_reservation_units
 from rooms.models import Room
 from rooms.services import preferred_room_code_from_parsed_room_name
 
@@ -106,12 +105,6 @@ def assign_room_for_unit(
 def assign_rooms_for_reservation(*, reservation_id: int) -> list[Room | None]:
     reservation = Reservation.objects.select_for_update().prefetch_related("units").get(id=reservation_id)
 
-    if not reservation.units.exists():
-        if not (reservation.room_name or "").strip():
-            return []
-        sync_reservation_units(reservation=reservation, room_name=reservation.room_name)
-        reservation.refresh_from_db()
-
     units = list(reservation.units.order_by("sort_order", "id"))
     if not units:
         return []
@@ -121,7 +114,6 @@ def assign_rooms_for_reservation(*, reservation_id: int) -> list[Room | None]:
         preferred = preferred_room_code_from_parsed_room_name(unit.room_name)
         assigned.append(assign_room_for_unit(unit=unit, preferred_room_code=preferred))
 
-    sync_reservation_denormalized_room_name(reservation, units=units)
     return assigned
 
 

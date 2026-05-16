@@ -181,7 +181,6 @@ class Command(BaseCommand):
             reservation, created = Reservation.objects.update_or_create(
                 external_id=item["external_id"],
                 defaults={
-                    "room_name": item["room_name"],
                     "check_in_date": check_in,
                     "check_out_date": check_out,
                     "status": item["status"],
@@ -190,6 +189,10 @@ class Command(BaseCommand):
                 },
             )
             reservations_created += int(created)
+
+            from reception.reservation_units import sync_reservation_units
+
+            sync_reservation_units(reservation=reservation, room_name=item["room_name"])
 
             reservation.guests.all().delete()
 

@@ -2,12 +2,11 @@ from django.core.management.base import BaseCommand
 from django.db.models import Count
 
 from reception.models import Reservation
-from reception.reservation_units import sync_reservation_units
 from rooms.allocation import assign_rooms_for_reservation
 
 
 class Command(BaseCommand):
-    help = "Ensure every reservation has ReservationUnit rows derived from room_name."
+    help = "Assign physical rooms for reservations that already have ReservationUnit rows."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -30,29 +29,23 @@ class Command(BaseCommand):
         if external_id:
             qs = qs.filter(external_id=external_id)
 
-        created_units = 0
         assigned = 0
-        warnings = 0
+        no_units = 0
 
         for reservation in qs.iterator():
-            if not (reservation.room_name or "").strip():
+            if reservation.units.count() == 0:
                 self.stdout.write(
-                    self.style.WARNING(f"skip {reservation.external_id}: empty room_name")
+                    self.style.WARNING(
+                        f"skip {reservation.external_id}: no units (re-import booking data)"
+                    )
                 )
-                warnings += 1
+                no_units += 1
                 continue
-
-            before = reservation.units.count()
-            if before == 0:
-                sync_reservation_units(reservation=reservation, room_name=reservation.room_name)
-                created_units += 1
 
             if assign_rooms:
                 assign_rooms_for_reservation(reservation_id=reservation.id)
                 assigned += 1
 
         self.stdout.write(
-            self.style.SUCCESS(
-                f"done: created_unit_sets={created_units} assigned={assigned} warnings={warnings}"
-            )
+            self.style.SUCCESS(f"done: assigned={assigned} no_units={no_units}")
         )

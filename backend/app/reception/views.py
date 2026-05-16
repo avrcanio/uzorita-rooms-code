@@ -38,7 +38,7 @@ class ReservationTimelineListView(generics.ListAPIView):
                 "units__room",
                 "units__room_type",
             )
-            .order_by("check_in_date", "room_name", "id")
+            .order_by("check_in_date", "id")
         )
 
         status = self.request.query_params.get("status")
@@ -61,7 +61,7 @@ class ReservationTimelineListView(generics.ListAPIView):
         if search:
             queryset = queryset.filter(
                 Q(external_id__icontains=search)
-                | Q(room_name__icontains=search)
+                | Q(units__room_name__icontains=search)
                 | Q(guests__first_name__icontains=search)
                 | Q(guests__last_name__icontains=search)
             ).distinct()

@@ -57,7 +57,6 @@ class ReservationRoomOverlapValidationTests(TestCase):
     def _reservation_with_unit(self, *, external_id: str, status: str, start: date, end: date) -> Reservation:
         reservation = Reservation.objects.create(
             external_id=external_id,
-            room_name="Test Room",
             check_in_date=start,
             check_out_date=end,
             status=status,
@@ -80,7 +79,6 @@ class ReservationRoomOverlapValidationTests(TestCase):
         )
         reservation_b = Reservation.objects.create(
             external_id="B",
-            room_name="Test Room",
             check_in_date=date(2026, 6, 11),
             check_out_date=date(2026, 6, 13),
             status=ReservationStatus.EXPECTED,
@@ -104,7 +102,6 @@ class ReservationRoomOverlapValidationTests(TestCase):
         )
         reservation_b = Reservation.objects.create(
             external_id="B",
-            room_name="Test Room",
             check_in_date=date(2026, 6, 11),
             check_out_date=date(2026, 6, 13),
             status=ReservationStatus.EXPECTED,
@@ -956,7 +953,6 @@ class PaddleDocumentScanViewTests(TestCase):
         self.rt = RoomType.objects.create(code="OCR", name_i18n={"en": "OCR Room"})
         self.res = Reservation.objects.create(
             external_id="paddle-scan-1",
-            room_name="Room OCR",
             check_in_date=date(2026, 8, 1),
             check_out_date=date(2026, 8, 5),
             status=ReservationStatus.EXPECTED,
@@ -1076,7 +1072,6 @@ class PaddleDocumentScanViewTests(TestCase):
     def test_reservation_mismatch_returns_400(self):
         other = Reservation.objects.create(
             external_id="paddle-scan-2",
-            room_name="Other",
             check_in_date=date(2026, 9, 1),
             check_out_date=date(2026, 9, 3),
             status=ReservationStatus.EXPECTED,
@@ -1184,7 +1179,6 @@ class PaddleDocumentScanFrontTests(TestCase):
         self.rt = RoomType.objects.create(code="OCR-F", name_i18n={"en": "OCR"})
         self.res = Reservation.objects.create(
             external_id="paddle-front-1",
-            room_name="R1",
             check_in_date=date(2026, 8, 1),
             check_out_date=date(2026, 8, 5),
             status=ReservationStatus.EXPECTED,
@@ -1346,7 +1340,9 @@ class BookingXlsImportTests(TestCase):
         self.assertEqual(guests.count(), 2)
         self.assertTrue(guests.first().is_primary)
 
-    def test_multi_room_row_keeps_full_room_name(self):
+    def test_multi_room_row_keeps_joined_room_names(self):
+        from reception.reservation_units import joined_room_names
+
         row = self._sample_row(
             external_id="5029796224",
             units_count=3,
@@ -1354,8 +1350,9 @@ class BookingXlsImportTests(TestCase):
         )
         upsert_reservation_from_xls_row(row)
         res = Reservation.objects.get(external_id="5029796224")
-        self.assertIn("R3", res.room_name)
-        self.assertIn("R1", res.room_name)
+        joined = joined_room_names(res)
+        self.assertIn("R3", joined)
+        self.assertIn("R1", joined)
 
     def test_multi_room_creates_reservation_units(self):
         from reception.models import ReservationUnit
@@ -1418,24 +1415,17 @@ class BookingXlsImportTests(TestCase):
 
 
 class EnsureReservationUnitsCommandTests(TestCase):
-    def test_creates_units_from_room_name(self):
+    def test_skips_reservation_without_units(self):
         reservation = Reservation.objects.create(
             external_id="ensure-units-1",
-            room_name="Luxury Room Uzorita - R2, Luxury Room Uzorita - R1",
             check_in_date=date(2026, 7, 1),
             check_out_date=date(2026, 7, 3),
             status=ReservationStatus.EXPECTED,
         )
-        self.assertEqual(reservation.units.count(), 0)
-
         from django.core.management import call_command
 
         call_command("ensure_reservation_units", external_id="ensure-units-1")
-
-        units = list(reservation.units.order_by("sort_order"))
-        self.assertEqual(len(units), 2)
-        self.assertIn("R2", units[0].room_name)
-        self.assertIn("R1", units[1].room_name)
+        self.assertEqual(reservation.units.count(), 0)
 
 
 class BookingXlsImportApiTests(TestCase):
