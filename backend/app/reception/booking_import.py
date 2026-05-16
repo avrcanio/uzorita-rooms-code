@@ -15,6 +15,22 @@ class ImportResult:
     primary_guest_id: int | None
 
 
+def _should_update_guest_email(current: str | None, new_email: str | None) -> bool:
+    if not new_email:
+        return False
+    current_norm = (current or "").strip().lower()
+    new_norm = new_email.strip().lower()
+    if not new_norm or current_norm == new_norm:
+        return False
+    if current_norm.endswith("@guest.booking.com") and not new_norm.endswith("@guest.booking.com"):
+        return False
+    if new_norm.endswith("@uzorita.hr"):
+        return False
+    if new_norm.split("@", 1)[0] in {"room_reservations", "reservations", "noreply", "no-reply"}:
+        return False
+    return True
+
+
 def _split_name(full_name: str | None) -> tuple[str, str]:
     if not full_name:
         return ("", "")
@@ -94,11 +110,9 @@ def upsert_reservation_from_booking_payload(
             if last_name and primary.last_name != last_name:
                 primary.last_name = last_name
                 g_changed = True
-            if guest_email:
-                normalized_email = guest_email.strip()
-                if normalized_email and primary.email != normalized_email:
-                    primary.email = normalized_email
-                    g_changed = True
+            if _should_update_guest_email(primary.email, guest_email):
+                primary.email = guest_email.strip()
+                g_changed = True
             if guest_nationality_iso2:
                 nat = guest_nationality_iso2.strip().upper()
                 if nat and primary.nationality != nat:

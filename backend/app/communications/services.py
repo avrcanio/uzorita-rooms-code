@@ -69,6 +69,16 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
             inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
             return {"status": "partial", "missing": missing}
 
+        if payload.kind == "message":
+            inbound.parse_status = ParseStatus.PARSED
+            inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
+            return {
+                "status": "parsed",
+                "external_id": payload.booking_number,
+                "skipped_upsert": True,
+                "reason": "message_kind",
+            }
+
         status = status_from_booking_kind(payload.kind)
 
         if dry_run:

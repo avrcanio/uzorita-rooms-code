@@ -243,6 +243,22 @@ def _parse_room_blocks(lines: list[str]) -> list[dict[str, Any]]:
     return rooms
 
 
+def _is_blocked_guest_email(email: str) -> bool:
+    normalized = email.strip().lower()
+    if not normalized or "@" not in normalized:
+        return True
+    if normalized.endswith("@guest.booking.com"):
+        return False
+    local, domain = normalized.split("@", 1)
+    if domain in {"rentl.io", "uzorita.hr"}:
+        return True
+    if domain == "booking.com" and local in {"noreply", "no-reply", "donotreply"}:
+        return True
+    if local in {"room_reservations", "reservations", "noreply", "no-reply"}:
+        return True
+    return False
+
+
 def _parse_guest_email(lines: list[str]) -> str | None:
     emails: list[str] = []
     for line in lines:
@@ -258,13 +274,10 @@ def _parse_guest_email(lines: list[str]) -> str | None:
         if e.lower().endswith("@guest.booking.com"):
             return e
 
-    # Avoid picking "vendor" / footer emails.
-    blocklist_domains = {"rentl.io"}
+    # Avoid property mailbox, vendor footers, and Booking system addresses.
     for e in emails:
-        domain = e.split("@", 1)[-1].lower()
-        if domain in blocklist_domains:
-            continue
-        return e
+        if not _is_blocked_guest_email(e):
+            return e
 
     return None
 
