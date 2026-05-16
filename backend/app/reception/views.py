@@ -300,8 +300,7 @@ class DocumentScanIngestView(APIView):
         mrz = str(raw_payload.get("sirovi_mrz", "")).strip()
         if mrz:
             updates["mrz_raw_text"] = mrz
-            if method == "NFC":
-                updates["mrz_verified"] = True
+            updates["mrz_verified"] = True
 
         face_photo_b64 = str(biom.get("fotografija_b64", "")).strip()
         signature_b64 = str(biom.get("potpis_b64", "")).strip()

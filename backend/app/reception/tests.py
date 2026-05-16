@@ -1554,3 +1554,77 @@ class ReservationDetailApiTests(TestCase):
         url = f"/api/reception/reservations/{self.reservation.id}/"
         response = self.client.patch(url, {"status": "invalid_status"}, format="json")
         self.assertEqual(response.status_code, 400)
+
+
+class DocumentScanIngestViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("doc_scan_ingest", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.rt = RoomType.objects.create(code="SCAN", name_i18n={"en": "Scan Room"})
+        self.room = Room.objects.create(code="S1", room_type=self.rt)
+        self.reservation = Reservation.objects.create(
+            external_id="scan-ingest-1",
+            check_in_date=date(2026, 9, 1),
+            check_out_date=date(2026, 9, 3),
+            status=ReservationStatus.EXPECTED,
+        )
+        ReservationUnit.objects.create(
+            reservation=self.reservation,
+            sort_order=0,
+            room_name="Scan Room",
+            room_type=self.rt,
+            room=self.room,
+        )
+        self.guest = Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Prije",
+            last_name="Skena",
+            is_primary=True,
+            mrz_verified=False,
+        )
+
+    def _scan_url(self):
+        return (
+            f"/api/reception/reservations/{self.reservation.id}/"
+            f"guests/{self.guest.id}/document-scan/"
+        )
+
+    def _minimal_payload(self, method: str):
+        return {
+            "metapodaci": {
+                "metoda_ocitanja": method,
+                "uredaj_id": "test-device",
+            },
+            "podaci_gosta": {
+                "ime": "Ante",
+                "prezime": "Testic",
+                "broj_dokumenta": "119384087",
+            },
+            "sirovi_mrz": "IOHRV119384087911528564544<<<<\n7604234M3005121HRV<<<<<<<<<<<9",
+        }
+
+    def test_ocr_scan_sets_mrz_verified(self):
+        response = self.client.post(self._scan_url(), self._minimal_payload("OCR"), format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("scan_status"), DocumentScanStatus.OK)
+        self.guest.refresh_from_db()
+        self.assertTrue(self.guest.mrz_verified)
+        self.assertIn("IOHRV", self.guest.mrz_raw_text)
+
+    def test_nfc_scan_sets_mrz_verified(self):
+        response = self.client.post(self._scan_url(), self._minimal_payload("NFC"), format="json")
+        self.assertEqual(response.status_code, 200)
+        self.guest.refresh_from_db()
+        self.assertTrue(self.guest.mrz_verified)
+
+    def test_patch_guest_mrz_verified_only(self):
+        url = (
+            f"/api/reception/reservations/{self.reservation.id}/"
+            f"guests/{self.guest.id}/"
+        )
+        response = self.client.patch(url, {"mrz_verified": True}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["mrz_verified"])
+        self.guest.refresh_from_db()
+        self.assertTrue(self.guest.mrz_verified)
