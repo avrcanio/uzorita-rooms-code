@@ -2,7 +2,24 @@ from rest_framework import serializers
 
 from reception.reservation_units import joined_room_names
 
-from .models import Guest, Reservation, ReservationUnit
+from .models import Guest, Reservation, ReservationStatus, ReservationUnit
+
+
+def payment_status_key(raw: str) -> str:
+    value = (raw or "").strip().lower()
+    if not value:
+        return "unknown"
+    if "booking" in value:
+        return "booking"
+    if any(token in value for token in ("plać", "plac", "paid", "naplać", "naplac")):
+        return "paid"
+    if any(token in value for token in ("neplać", "neplac", "unpaid", "duguje")):
+        return "unpaid"
+    if "kartic" in value or "card" in value:
+        return "card"
+    if "gotov" in value or "cash" in value:
+        return "cash"
+    return "other"
 
 
 class GuestLiteSerializer(serializers.ModelSerializer):
@@ -44,6 +61,8 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
     primary_guest_nationality_iso2 = serializers.SerializerMethodField()
     room_codes = serializers.SerializerMethodField()
     room_name = serializers.SerializerMethodField()
+    effective_units_count = serializers.SerializerMethodField()
+    payment_status_key = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -61,13 +80,22 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
             "currency",
             "booker_name",
             "booker_phone",
+            "booker_address",
             "booker_country",
+            "payment_provider",
+            "commission_percent",
+            "commission_amount",
+            "travel_purpose",
+            "booking_device",
             "units_count",
+            "effective_units_count",
             "persons_count",
             "adults_count",
             "children_count",
+            "children_ages",
             "notes",
             "payment_status",
+            "payment_status_key",
             "nights_count",
             "booked_at",
             "import_source",
@@ -104,6 +132,27 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
 
     def get_room_name(self, obj) -> str:
         return joined_room_names(obj)
+
+    def get_effective_units_count(self, obj) -> int:
+        unit_list = list(obj.units.all())
+        from_units = len(unit_list)
+        from_field = obj.units_count or 0
+        return max(from_field, from_units)
+
+    def get_payment_status_key(self, obj) -> str:
+        return payment_status_key(obj.payment_status)
+
+
+class ReservationUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reservation
+        fields = ("status",)
+
+    def validate_status(self, value):
+        allowed = {choice[0] for choice in ReservationStatus.choices}
+        if value not in allowed:
+            raise serializers.ValidationError("Nepoznat status rezervacije.")
+        return value
 
 
 class GuestDetailSerializer(serializers.ModelSerializer):

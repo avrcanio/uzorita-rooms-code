@@ -13,8 +13,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import DocumentScanLog, DocumentScanStatus, Guest, IDDocument, Reservation
-from .serializers import GuestDetailSerializer, ReservationTimelineSerializer
+from .models import DocumentScanLog, DocumentScanStatus, Guest, IDDocument, Reservation, ReservationUnit
+from .serializers import (
+    GuestDetailSerializer,
+    ReservationTimelineSerializer,
+    ReservationUpdateSerializer,
+)
 
 
 class ReceptionHealthView(APIView):
@@ -35,6 +39,10 @@ class ReservationTimelineListView(generics.ListAPIView):
             .annotate(guests_count=Count("guests", distinct=True))
             .prefetch_related(
                 Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),
+                Prefetch(
+                    "units",
+                    queryset=ReservationUnit.objects.order_by("sort_order", "id"),
+                ),
                 "units__room",
                 "units__room_type",
             )
@@ -75,20 +83,38 @@ class ReservationTimelineListView(generics.ListAPIView):
         return parse_date(raw_value)
 
 
-class ReservationDetailView(generics.RetrieveAPIView):
+class ReservationDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = ReservationTimelineSerializer
+
+    def get_serializer_class(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return ReservationUpdateSerializer
+        return ReservationTimelineSerializer
 
     def get_queryset(self):
         return (
             Reservation.objects.annotate(guests_count=Count("guests", distinct=True))
             .prefetch_related(
                 Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),
+                Prefetch(
+                    "units",
+                    queryset=ReservationUnit.objects.order_by("sort_order", "id"),
+                ),
                 "units__room",
                 "units__room_type",
             )
             .order_by("id")
         )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        update_serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        update_serializer.is_valid(raise_exception=True)
+        self.perform_update(update_serializer)
+        detail = self.get_queryset().get(pk=instance.pk)
+        output = ReservationTimelineSerializer(detail, context=self.get_serializer_context())
+        return Response(output.data)
 
 
 class ReservationGuestDetailView(generics.RetrieveUpdateAPIView):

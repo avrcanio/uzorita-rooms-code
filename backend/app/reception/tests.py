@@ -1519,3 +1519,38 @@ class BookingXlsImportApiTests(TestCase):
         from_bytes = parse_booking_xls_bytes(content)
         self.assertEqual(len(from_path), len(from_bytes))
         self.assertEqual(from_path[0].external_id, from_bytes[0].external_id)
+
+
+class ReservationDetailApiTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("reservation_detail_api", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.rt = RoomType.objects.create(code="RDET", name_i18n={"en": "Detail Room"})
+        self.room = Room.objects.create(code="D1", room_type=self.rt)
+        self.reservation = Reservation.objects.create(
+            external_id="detail-patch-1",
+            check_in_date=date(2026, 8, 1),
+            check_out_date=date(2026, 8, 3),
+            status=ReservationStatus.EXPECTED,
+        )
+        ReservationUnit.objects.create(
+            reservation=self.reservation,
+            sort_order=0,
+            room_name="Detail Room",
+            room_type=self.rt,
+            room=self.room,
+        )
+
+    def test_patch_updates_status(self):
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_IN}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], ReservationStatus.CHECKED_IN)
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, ReservationStatus.CHECKED_IN)
+
+    def test_patch_rejects_invalid_status(self):
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": "invalid_status"}, format="json")
+        self.assertEqual(response.status_code, 400)
