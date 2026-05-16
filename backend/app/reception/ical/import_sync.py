@@ -10,6 +10,7 @@ from django.utils import timezone
 from icalendar import Calendar
 
 from reception.booking_import import upsert_reservation_from_booking_payload
+from reception.ical.placeholders import is_ical_placeholder_external_id
 from reception.models import BookingIcalFeed, ImportSource, ReservationStatus
 
 BOOKING_NUMBER_RE = re.compile(r"\d{8,12}")
@@ -151,10 +152,7 @@ def sync_feed(feed: BookingIcalFeed, *, dry_run: bool = False) -> ImportSyncResu
             summary=ev["summary"],
             description=ev["description"],
         )
-        # Booking blocks use opaque UIDs without reservation numbers.
-        if external_id.startswith("ical-") and not BOOKING_NUMBER_RE.search(
-            f"{ev['uid']} {ev['summary']} {ev['description']}"
-        ):
+        if is_ical_placeholder_external_id(external_id):
             skipped_blocks += 1
             continue
 

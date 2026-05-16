@@ -13,6 +13,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from reception.ical.placeholders import exclude_ical_placeholder_reservations
+
 from .models import DocumentScanLog, DocumentScanStatus, Guest, IDDocument, Reservation, ReservationUnit
 from .serializers import (
     GuestDetailSerializer,
@@ -35,7 +37,7 @@ class ReservationTimelineListView(generics.ListAPIView):
 
     def get_queryset(self):
         queryset = (
-            Reservation.objects.all()
+            exclude_ical_placeholder_reservations(Reservation.objects.all())
             .annotate(guests_count=Count("guests", distinct=True))
             .prefetch_related(
                 Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),

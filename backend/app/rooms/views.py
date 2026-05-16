@@ -3,6 +3,7 @@ from django.utils.dateparse import parse_date
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 
+from reception.ical.placeholders import exclude_ical_placeholder_reservations
 from reception.models import Reservation, ReservationStatus
 from rooms.models import Room, RoomType
 from rooms.serializers import RoomReservationSerializer, RoomSerializer, RoomTypeSerializer
@@ -57,7 +58,9 @@ class RoomCalendarView(generics.ListAPIView):
     def get_queryset(self):
         room_id = self.kwargs["room_id"]
         qs = (
-            Reservation.objects.filter(units__room_id=room_id)
+            exclude_ical_placeholder_reservations(
+                Reservation.objects.filter(units__room_id=room_id)
+            )
             .distinct()
             .prefetch_related("guests", "units__room")
             .order_by("check_in_date", "id")

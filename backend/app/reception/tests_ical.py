@@ -7,6 +7,7 @@ from django.urls import reverse
 
 from reception.ical.export import blocked_date_ranges_for_feed, build_export_ics
 from reception.ical.import_sync import extract_external_id, is_availability_block, sync_feed
+from reception.ical.placeholders import exclude_ical_placeholder_reservations, is_ical_placeholder_external_id
 from reception.models import BookingIcalFeed, ImportSource, Reservation, ReservationStatus, ReservationUnit
 from rooms.models import Room, RoomType
 
@@ -174,6 +175,55 @@ END:VCALENDAR
             extract_external_id(uid="opaque-uid-xyz", summary="", description=""),
             "ical-opaque-uid-xyz",
         )
+
+    def test_placeholder_external_id_detection(self):
+        self.assertTrue(
+            is_ical_placeholder_external_id(
+                "ical-dffd562878b313fde11fd57afa21b312-booking-com"
+            )
+        )
+        self.assertFalse(is_ical_placeholder_external_id("5307026805"))
+
+    @patch("reception.ical.import_sync.httpx.get")
+    def test_import_skips_opaque_uid_placeholders(self, mock_get):
+        opaque_ics = b"""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:ical-dffd562878b313fde11fd57afa21b312-booking-com
+DTSTART;VALUE=DATE:20260901
+DTEND;VALUE=DATE:20260902
+SUMMARY:Reserved
+END:VEVENT
+END:VCALENDAR
+"""
+        mock_response = mock_get.return_value
+        mock_response.status_code = 200
+        mock_response.content = opaque_ics
+        mock_response.headers = {}
+
+        result = sync_feed(self.feed)
+        self.assertEqual(result.skipped_blocks, 1)
+        self.assertEqual(result.upserted, 0)
+        self.assertFalse(Reservation.objects.filter(external_id__startswith="ical-dffd").exists())
+
+    def test_exclude_placeholder_from_queryset(self):
+        Reservation.objects.create(
+            external_id="ical-abc123-booking-com",
+            check_in_date=date(2026, 9, 1),
+            check_out_date=date(2026, 9, 2),
+            status=ReservationStatus.EXPECTED,
+            import_source=ImportSource.BOOKING_ICAL,
+        )
+        Reservation.objects.create(
+            external_id="5307026805",
+            check_in_date=date(2026, 5, 16),
+            check_out_date=date(2026, 5, 17),
+            status=ReservationStatus.EXPECTED,
+            import_source=ImportSource.BOOKING_ICAL,
+        )
+        visible = list(exclude_ical_placeholder_reservations(Reservation.objects.all()))
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0].external_id, "5307026805")
 
     @patch("reception.ical.import_sync.httpx.get")
     def test_import_creates_reservation_and_unit(self, mock_get):
