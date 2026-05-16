@@ -1555,6 +1555,23 @@ class ReservationDetailApiTests(TestCase):
         response = self.client.patch(url, {"status": "invalid_status"}, format="json")
         self.assertEqual(response.status_code, 400)
 
+    def test_patch_allows_expected_to_checked_in(self):
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_IN}, format="json")
+        self.assertEqual(response.status_code, 200)
+
+    def test_patch_rejects_expected_to_checked_out(self):
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_patch_rejects_checked_out_to_expected(self):
+        self.reservation.status = ReservationStatus.CHECKED_OUT
+        self.reservation.save(update_fields=["status", "updated_at"])
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.EXPECTED}, format="json")
+        self.assertEqual(response.status_code, 400)
+
 
 class DocumentScanIngestViewTests(TestCase):
     def setUp(self):

@@ -143,6 +143,17 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
         return payment_status_key(obj.payment_status)
 
 
+_ALLOWED_STATUS_TRANSITIONS = {
+    ReservationStatus.EXPECTED: {
+        ReservationStatus.CHECKED_IN,
+        ReservationStatus.CANCELED,
+    },
+    ReservationStatus.CHECKED_IN: {ReservationStatus.CHECKED_OUT},
+    ReservationStatus.CHECKED_OUT: set(),
+    ReservationStatus.CANCELED: set(),
+}
+
+
 class ReservationUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Reservation
@@ -152,6 +163,17 @@ class ReservationUpdateSerializer(serializers.ModelSerializer):
         allowed = {choice[0] for choice in ReservationStatus.choices}
         if value not in allowed:
             raise serializers.ValidationError("Nepoznat status rezervacije.")
+
+        instance = getattr(self, "instance", None)
+        if instance is not None:
+            current = instance.status
+            if value == current:
+                return value
+            next_allowed = _ALLOWED_STATUS_TRANSITIONS.get(current, set())
+            if value not in next_allowed:
+                raise serializers.ValidationError(
+                    "Nedozvoljen prijelaz statusa rezervacije."
+                )
         return value
 
 
