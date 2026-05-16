@@ -116,6 +116,46 @@ class ReservationRoomOverlapValidationTests(TestCase):
         unit_b.full_clean()
 
 
+class ReservationTimelineListViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("timeline_user", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+
+    def _create(self, external_id: str, check_in: date, check_out: date) -> Reservation:
+        return Reservation.objects.create(
+            external_id=external_id,
+            check_in_date=check_in,
+            check_out_date=check_out,
+            status=ReservationStatus.CHECKED_IN,
+        )
+
+    def test_period_from_to_includes_arrivals_and_departures(self):
+        arrival = self._create("5307026805", date(2026, 5, 16), date(2026, 5, 17))
+        departure = self._create("6368399004", date(2026, 5, 14), date(2026, 5, 16))
+        outside = self._create("9999999999", date(2026, 5, 10), date(2026, 5, 12))
+
+        resp = self.client.get(
+            "/api/reception/reservations/",
+            {"period_from": "2026-05-16", "period_to": "2026-05-16"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = {item["external_id"] for item in resp.data}
+        self.assertIn(arrival.external_id, ids)
+        self.assertIn(departure.external_id, ids)
+        self.assertNotIn(outside.external_id, ids)
+
+    def test_check_in_only_filter_still_excludes_departures(self):
+        departure = self._create("6519718194", date(2026, 5, 13), date(2026, 5, 16))
+        resp = self.client.get(
+            "/api/reception/reservations/",
+            {"check_in_from": "2026-05-16", "check_in_to": "2026-05-16"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = {item["external_id"] for item in resp.data}
+        self.assertNotIn(departure.external_id, ids)
+
+
 class NormalizePaddleResponseTests(TestCase):
     def test_fastapi_local_service_shape(self):
         """Fixture matches code/ocr_service FastAPI POST /predict JSON."""

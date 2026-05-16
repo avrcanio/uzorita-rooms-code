@@ -65,6 +65,14 @@ class ReservationTimelineListView(generics.ListAPIView):
         if check_in_to:
             queryset = queryset.filter(check_in_date__lte=check_in_to)
 
+        period_from = self._parse_date("period_from")
+        period_to = self._parse_date("period_to")
+        if period_from and period_to:
+            queryset = queryset.filter(
+                Q(check_in_date__gte=period_from, check_in_date__lte=period_to)
+                | Q(check_out_date__gte=period_from, check_out_date__lte=period_to)
+            )
+
         search = self.request.query_params.get("search", "").strip()
         if search:
             queryset = queryset.filter(
