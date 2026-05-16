@@ -10,3 +10,8 @@ backend/app/id_docs/
 backend/app/media/
 backend/app/.venv/
 backend/app/db.sqlite3
+
+# Booking.com XLS exports (local import fixtures, not source)
+backend/app/Prijava
+backend/app/Prijava*
+backend/app/*.xls
