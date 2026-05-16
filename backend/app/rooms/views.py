@@ -50,15 +50,20 @@ class RoomCalendarView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = RoomReservationSerializer
 
+    def _include_canceled(self) -> bool:
+        raw = (self.request.query_params.get("include_canceled") or "").strip().lower()
+        return raw in ("1", "true", "yes")
+
     def get_queryset(self):
         room_id = self.kwargs["room_id"]
         qs = (
             Reservation.objects.filter(units__room_id=room_id)
-            .exclude(status=ReservationStatus.CANCELED)
             .distinct()
             .prefetch_related("guests", "units__room")
             .order_by("check_in_date", "id")
         )
+        if not self._include_canceled():
+            qs = qs.exclude(status=ReservationStatus.CANCELED)
 
         from_raw = (self.request.query_params.get("from") or "").strip()
         to_raw = (self.request.query_params.get("to") or "").strip()

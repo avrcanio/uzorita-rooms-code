@@ -1628,3 +1628,58 @@ class DocumentScanIngestViewTests(TestCase):
         self.assertTrue(response.data["mrz_verified"])
         self.guest.refresh_from_db()
         self.assertTrue(self.guest.mrz_verified)
+
+
+class RoomCalendarViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("room_calendar_api", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.rt = RoomType.objects.create(code="RCAL", name_i18n={"en": "Cal Room"})
+        self.room = Room.objects.create(code="RC1", room_type=self.rt)
+        self.reservation_canceled = Reservation.objects.create(
+            external_id="cal-canceled-1",
+            check_in_date=date(2026, 3, 10),
+            check_out_date=date(2026, 3, 12),
+            status=ReservationStatus.CANCELED,
+        )
+        ReservationUnit.objects.create(
+            reservation=self.reservation_canceled,
+            sort_order=0,
+            room_name="Cal Room",
+            room_type=self.rt,
+            room=self.room,
+        )
+        self.reservation_active = Reservation.objects.create(
+            external_id="cal-active-1",
+            check_in_date=date(2026, 3, 15),
+            check_out_date=date(2026, 3, 17),
+            status=ReservationStatus.EXPECTED,
+        )
+        ReservationUnit.objects.create(
+            reservation=self.reservation_active,
+            sort_order=0,
+            room_name="Cal Room",
+            room_type=self.rt,
+            room=self.room,
+        )
+
+    def _calendar_url(self, include_canceled: bool = False):
+        base = f"/api/rooms/rooms/{self.room.id}/calendar/?from=2026-03-01&to=2026-04-01&lang=hr"
+        if include_canceled:
+            return f"{base}&include_canceled=1"
+        return base
+
+    def test_excludes_canceled_by_default(self):
+        response = self.client.get(self._calendar_url())
+        self.assertEqual(response.status_code, 200)
+        ids = {row["id"] for row in response.data}
+        self.assertIn(self.reservation_active.id, ids)
+        self.assertNotIn(self.reservation_canceled.id, ids)
+
+    def test_includes_canceled_when_requested(self):
+        response = self.client.get(self._calendar_url(include_canceled=True))
+        self.assertEqual(response.status_code, 200)
+        ids = {row["id"] for row in response.data}
+        self.assertIn(self.reservation_active.id, ids)
+        self.assertIn(self.reservation_canceled.id, ids)
