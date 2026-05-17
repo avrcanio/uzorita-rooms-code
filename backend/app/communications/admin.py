@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import EmailAttachment, InboundEmail, OutboundEmail, ParseError
+from .models import (
+    EmailAttachment,
+    GuestConversation,
+    GuestMessage,
+    InboundEmail,
+    OutboundEmail,
+    ParseError,
+)
 
 
 class EmailAttachmentInline(admin.TabularInline):
@@ -35,13 +42,69 @@ class InboundEmailAdmin(admin.ModelAdmin):
 
 @admin.register(OutboundEmail)
 class OutboundEmailAdmin(admin.ModelAdmin):
-    list_display = ("id", "created_at", "to_email", "subject", "status", "sent_at")
+    list_display = (
+        "id",
+        "created_at",
+        "to_email",
+        "subject",
+        "status",
+        "sent_at",
+        "reservation",
+        "guest",
+    )
     list_filter = ("status", "created_at")
-    search_fields = ("to_email", "subject")
+    search_fields = ("to_email", "subject", "smtp_message_id")
+    raw_id_fields = ("reservation", "guest", "conversation", "sent_by")
+    readonly_fields = ("created_at", "updated_at")
+
+
+class GuestMessageInline(admin.TabularInline):
+    model = GuestMessage
+    extra = 0
+    readonly_fields = (
+        "direction",
+        "body_text",
+        "inbound_email",
+        "outbound_email",
+        "sent_by",
+        "created_at",
+    )
+    fields = readonly_fields
+    can_delete = False
+
+
+@admin.register(GuestConversation)
+class GuestConversationAdmin(admin.ModelAdmin):
+    list_display = ("id", "reservation", "updated_at", "created_at")
+    search_fields = ("reservation__external_id",)
+    raw_id_fields = ("reservation",)
+    readonly_fields = ("created_at", "updated_at")
+    inlines = [GuestMessageInline]
+
+
+@admin.register(GuestMessage)
+class GuestMessageAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "conversation",
+        "direction",
+        "created_at",
+        "sent_by",
+    )
+    list_filter = ("direction", "created_at")
+    search_fields = (
+        "body_text",
+        "conversation__reservation__external_id",
+    )
+    raw_id_fields = ("conversation", "inbound_email", "outbound_email", "sent_by")
 
 
 @admin.register(ParseError)
 class ParseErrorAdmin(admin.ModelAdmin):
     list_display = ("id", "created_at", "code", "inbound_email")
     list_filter = ("code", "created_at")
-    search_fields = ("message", "inbound_email__subject", "inbound_email__message_id")
+    search_fields = (
+        "message",
+        "inbound_email__subject",
+        "inbound_email__message_id",
+    )

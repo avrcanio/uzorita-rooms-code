@@ -10,6 +10,8 @@ ROLE_SPECS = {
         "reception.iddocument": {"view", "add", "change"},
         "communications.inboundemail": {"view"},
         "communications.parseerror": {"view"},
+        "communications.guestconversation": {"view"},
+        "communications.guestmessage": {"view"},
     },
     "manager": {
         "auth.user": {"view"},
@@ -21,6 +23,8 @@ ROLE_SPECS = {
         "communications.parseerror": {"view", "change"},
         "communications.emailattachment": {"view"},
         "communications.outboundemail": {"view", "add", "change"},
+        "communications.guestconversation": {"view", "change"},
+        "communications.guestmessage": {"view", "change"},
     },
     "admin": {
         "auth.user": {"view", "add", "change", "delete"},
@@ -34,6 +38,8 @@ ROLE_SPECS = {
         "communications.parseerror": {"view", "add", "change", "delete"},
         "communications.emailattachment": {"view", "add", "change", "delete"},
         "communications.outboundemail": {"view", "add", "change", "delete"},
+        "communications.guestconversation": {"view", "add", "change", "delete"},
+        "communications.guestmessage": {"view", "add", "change", "delete"},
     },
 }
 
