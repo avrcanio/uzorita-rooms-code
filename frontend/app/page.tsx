@@ -70,6 +70,13 @@ function flagIconClass(iso2?: string | null): string | null {
 
 type OverviewMode = "today" | "week" | "month" | "all";
 
+/** Hotel calendar day (Šibenik / Europe-Zagreb), not UTC midnight from toISOString(). */
+const PROPERTY_TIME_ZONE = "Europe/Zagreb";
+
+function todayIsoInTimeZone(timeZone: string = PROPERTY_TIME_ZONE): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+}
+
 function addDaysIso(iso: string, deltaDays: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + deltaDays);
@@ -315,7 +322,7 @@ export default function Home() {
     }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIsoInTimeZone();
 
   const period = useMemo(() => {
     if (overviewMode === "all") {
