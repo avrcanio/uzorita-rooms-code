@@ -18,11 +18,11 @@ class ReceptionMonthlyStatisticsView(APIView):
         else:
             try:
                 year = int(year_param)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError):
                 return Response(
                     {"detail": "year mora biti cijeli broj."},
                     status=400,
-                ) from exc
+                )
             if year < 2000 or year > 2100:
                 return Response(
                     {"detail": "year izvan dopuštenog raspona."},
