@@ -1,4 +1,5 @@
 import base64
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -2154,6 +2155,10 @@ class DocumentPhotosUploadViewTests(TestCase):
             f"guests/{guest_id if guest_id is not None else self.guest.id}/document-photos/"
         )
 
+    @staticmethod
+    def _basename(storage_name: str) -> str:
+        return storage_name.rsplit("/", 1)[-1]
+
     def test_document_photos_passport_single_front(self):
         response = self.client.post(
             self._url(),
@@ -2171,6 +2176,11 @@ class DocumentPhotosUploadViewTests(TestCase):
         doc = IDDocument.objects.get(pk=response.data["id_document_id"])
         self.assertTrue(doc.front_photo)
         self.assertFalse(doc.back_photo)
+        self.assertIn("id_documents/passports/", doc.front_photo.name)
+        self.assertNotIn("/front/", doc.front_photo.name)
+        self.assertNotIn("/back/", doc.front_photo.name)
+        front_base = self._basename(doc.front_photo.name)
+        self.assertRegex(front_base, rf"^\d{{10}}_{self.guest.id}_pass\.jpg$")
 
         self.guest.refresh_from_db()
         self.assertEqual(self.guest.document_type, "Putovnica")
@@ -2204,6 +2214,16 @@ class DocumentPhotosUploadViewTests(TestCase):
         doc = IDDocument.objects.get(pk=response.data["id_document_id"])
         self.assertTrue(doc.front_photo)
         self.assertTrue(doc.back_photo)
+        self.assertIn("id_documents/", doc.front_photo.name)
+        self.assertIn("id_documents/", doc.back_photo.name)
+        self.assertNotIn("passports/", doc.front_photo.name)
+        self.assertNotIn("passports/", doc.back_photo.name)
+        self.assertNotIn("/front/", doc.front_photo.name)
+        self.assertNotIn("/back/", doc.back_photo.name)
+        front_base = self._basename(doc.front_photo.name)
+        back_base = self._basename(doc.back_photo.name)
+        self.assertRegex(front_base, rf"^\d{{10}}_{self.guest.id}_frontID\.jpg$")
+        self.assertRegex(back_base, rf"^\d{{10}}_{self.guest.id}_backID\.jpg$")
 
         self.guest.refresh_from_db()
         self.assertEqual(self.guest.document_type, "Osobna iskaznica")

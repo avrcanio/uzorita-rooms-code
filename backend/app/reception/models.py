@@ -3,6 +3,11 @@ import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
 
+from reception.document_photo_storage import (
+    id_document_back_upload_to,
+    id_document_front_upload_to,
+)
+
 
 class ReservationStatus(models.TextChoices):
     EXPECTED = "expected", "Ocekuje dolazak"
@@ -222,8 +227,8 @@ class IDDocument(models.Model):
     image_path = models.CharField(max_length=500)
     face_photo = models.ImageField(upload_to="id_documents/faces/", null=True, blank=True)
     signature_photo = models.ImageField(upload_to="id_documents/signatures/", null=True, blank=True)
-    front_photo = models.ImageField(upload_to="id_documents/front/", null=True, blank=True)
-    back_photo = models.ImageField(upload_to="id_documents/back/", null=True, blank=True)
+    front_photo = models.ImageField(upload_to=id_document_front_upload_to, null=True, blank=True)
+    back_photo = models.ImageField(upload_to=id_document_back_upload_to, null=True, blank=True)
     extracted_payload = models.JSONField(default=dict, blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
     verified_by = models.ForeignKey(

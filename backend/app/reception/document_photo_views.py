@@ -7,10 +7,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .document_photo_storage import (
+    DOCUMENT_TYPE_NATIONAL_ID,
+    DOCUMENT_TYPE_PASSPORT,
+    document_photo_filename,
+)
 from .models import Guest, IDDocument
-
-DOCUMENT_TYPE_PASSPORT = "passport"
-DOCUMENT_TYPE_NATIONAL_ID = "national_id"
 
 _GUEST_DOCUMENT_TYPE_LABELS = {
     DOCUMENT_TYPE_PASSPORT: "Putovnica",
@@ -82,13 +84,26 @@ class DocumentPhotosUploadView(APIView):
         front_saved = False
         back_saved = False
 
+        doc_type = data["document_type"]
+        id_document._passport_photo = doc_type == DOCUMENT_TYPE_PASSPORT
+
         front = data["front"]
-        id_document.front_photo.save(front.name or "front.jpg", front, save=False)
+        front_name = document_photo_filename(
+            guest_id=guest.id,
+            document_type=doc_type,
+            side="front",
+        )
+        id_document.front_photo.save(front_name, front, save=False)
         front_saved = True
 
         back = data.get("back")
         if back is not None:
-            id_document.back_photo.save(back.name or "back.jpg", back, save=False)
+            back_name = document_photo_filename(
+                guest_id=guest.id,
+                document_type=doc_type,
+                side="back",
+            )
+            id_document.back_photo.save(back_name, back, save=False)
             back_saved = True
 
         id_document.save(update_fields=["front_photo", "back_photo", "updated_at"])
