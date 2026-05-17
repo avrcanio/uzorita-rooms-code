@@ -398,6 +398,13 @@ class PropertyInfo(models.Model):
     google_maps_url = models.URLField(blank=True, default="", max_length=2000)
     google_maps_embed_url = models.URLField(blank=True, default="", max_length=2000)
 
+    evisitor_facility_code = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Šifra objekta u sustavu eVisitor (Facility).",
+    )
+
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

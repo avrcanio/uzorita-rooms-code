@@ -21,9 +21,12 @@ from reception.booking_xls_import import (
     parse_booking_xls_bytes,
     upsert_reservation_from_xls_row,
 )
+from reception.evisitor.mapper import build_check_in_payload
+from reception.evisitor.summary import evisitor_summary_for_reservation
 from reception.models import (
     DocumentScanLog,
     DocumentScanStatus,
+    EvisitorGuestStatus,
     Guest,
     ImportSource,
     Reservation,
@@ -122,18 +125,30 @@ class ReservationTimelineListViewTests(TestCase):
         self.client = APIClient()
         self.client.force_login(self.user)
 
-    def _create(self, external_id: str, check_in: date, check_out: date) -> Reservation:
+    def _create(
+        self,
+        external_id: str,
+        check_in: date,
+        check_out: date,
+        *,
+        status: str = ReservationStatus.CHECKED_IN,
+    ) -> Reservation:
         return Reservation.objects.create(
             external_id=external_id,
             check_in_date=check_in,
             check_out_date=check_out,
-            status=ReservationStatus.CHECKED_IN,
+            status=status,
         )
 
     def test_period_from_to_includes_arrivals_and_departures(self):
         arrival = self._create("5307026805", date(2026, 5, 16), date(2026, 5, 17))
         departure = self._create("6368399004", date(2026, 5, 14), date(2026, 5, 16))
-        outside = self._create("9999999999", date(2026, 5, 10), date(2026, 5, 12))
+        outside = self._create(
+            "9999999999",
+            date(2026, 5, 10),
+            date(2026, 5, 12),
+            status=ReservationStatus.EXPECTED,
+        )
 
         resp = self.client.get(
             "/api/reception/reservations/",
@@ -144,6 +159,31 @@ class ReservationTimelineListViewTests(TestCase):
         self.assertIn(arrival.external_id, ids)
         self.assertIn(departure.external_id, ids)
         self.assertNotIn(outside.external_id, ids)
+
+    def test_period_includes_checked_in_outside_date_range(self):
+        in_period = self._create("5307026805", date(2026, 5, 16), date(2026, 5, 17))
+        old_checked_in = self._create(
+            "8888888888",
+            date(2026, 1, 1),
+            date(2026, 1, 5),
+            status=ReservationStatus.CHECKED_IN,
+        )
+        outside_expected = self._create(
+            "9999999999",
+            date(2026, 5, 10),
+            date(2026, 5, 12),
+            status=ReservationStatus.EXPECTED,
+        )
+
+        resp = self.client.get(
+            "/api/reception/reservations/",
+            {"period_from": "2026-05-16", "period_to": "2026-05-16"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = {item["external_id"] for item in resp.data}
+        self.assertIn(in_period.external_id, ids)
+        self.assertIn(old_checked_in.external_id, ids)
+        self.assertNotIn(outside_expected.external_id, ids)
 
     def test_check_in_only_filter_still_excludes_departures(self):
         departure = self._create("6519718194", date(2026, 5, 13), date(2026, 5, 16))
@@ -1611,6 +1651,151 @@ class ReservationDetailApiTests(TestCase):
         url = f"/api/reception/reservations/{self.reservation.id}/"
         response = self.client.patch(url, {"status": ReservationStatus.EXPECTED}, format="json")
         self.assertEqual(response.status_code, 400)
+
+    def test_patch_rejects_checked_out_when_evisitor_incomplete(self):
+        self.reservation.status = ReservationStatus.CHECKED_IN
+        self.reservation.save(update_fields=["status", "updated_at"])
+        Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Test",
+            is_primary=True,
+            nationality="HR",
+            sex="ženski",
+            date_of_birth=date(1990, 1, 1),
+            document_number="HR123",
+            document_type="osobna",
+        )
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_patch_allows_checked_out_when_evisitor_complete(self):
+        self.reservation.status = ReservationStatus.CHECKED_IN
+        self.reservation.save(update_fields=["status", "updated_at"])
+        Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Test",
+            is_primary=True,
+            nationality="HR",
+            sex="ženski",
+            date_of_birth=date(1990, 1, 1),
+            document_number="HR123",
+            document_type="osobna",
+            evisitor_status=EvisitorGuestStatus.SENT,
+        )
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
+        self.assertEqual(response.status_code, 200)
+
+
+@override_settings(
+    EVISITOR_ENABLED=True,
+    EVISITOR_ENV="test",
+    EVISITOR_BASE_URL="https://www.evisitor.hr/testApi",
+    EVISITOR_USERNAME="testuser",
+    EVISITOR_PASSWORD="testpass",
+    EVISITOR_API_KEY="testkey",
+    EVISITOR_FACILITY_CODE="0000022",
+)
+class EvisitorSubmitViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("evisitor_user", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.reservation = Reservation.objects.create(
+            external_id="ev-1",
+            check_in_date=date(2026, 6, 1),
+            check_out_date=date(2026, 6, 5),
+            status=ReservationStatus.CHECKED_IN,
+        )
+        self.guest = Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ivan",
+            last_name="Horvat",
+            is_primary=True,
+            nationality="HR",
+            sex="muški",
+            date_of_birth=date(1985, 3, 15),
+            document_number="123456789",
+            document_type="osobna",
+        )
+
+    @patch("reception.evisitor.service.EvisitorClient")
+    def test_submit_success(self, mock_client_cls):
+        mock_client = mock_client_cls.return_value
+        mock_client.login.return_value = True
+        mock_client.execute_action.return_value = None
+
+        url = f"/api/reception/reservations/{self.reservation.id}/guests/{self.guest.id}/evisitor-submit/"
+        response = self.client.post(url, {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], EvisitorGuestStatus.SENT)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.evisitor_status, EvisitorGuestStatus.SENT)
+
+    def test_submit_validation_error_when_incomplete_guest(self):
+        self.guest.document_number = ""
+        self.guest.save(update_fields=["document_number", "updated_at"])
+        url = f"/api/reception/reservations/{self.reservation.id}/guests/{self.guest.id}/evisitor-submit/"
+        response = self.client.post(url, {}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+
+class EvisitorMapperTests(TestCase):
+    @override_settings(EVISITOR_FACILITY_CODE="0000022")
+    def test_build_check_in_payload_maps_core_fields(self):
+        reservation = Reservation.objects.create(
+            external_id="map-1",
+            check_in_date=date(2026, 6, 1),
+            check_out_date=date(2026, 6, 5),
+        )
+        guest = Guest.objects.create(
+            reservation=reservation,
+            first_name="Ivan",
+            last_name="Horvat",
+            nationality="HR",
+            sex="M",
+            date_of_birth=date(1985, 3, 15),
+            document_number="ABC123",
+            document_type="putovnica",
+        )
+        payload = build_check_in_payload(guest)
+        self.assertEqual(payload["TouristName"], "Ivan")
+        self.assertEqual(payload["Citizenship"], "HRV")
+        self.assertEqual(payload["Facility"], "0000022")
+        self.assertEqual(payload["DocumentType"], "008")
+
+
+class EvisitorSummaryTests(TestCase):
+    def test_summary_complete_when_all_sent(self):
+        reservation = Reservation.objects.create(
+            external_id="sum-1",
+            check_in_date=date(2026, 6, 1),
+            check_out_date=date(2026, 6, 3),
+        )
+        Guest.objects.create(
+            reservation=reservation,
+            first_name="A",
+            last_name="B",
+            evisitor_status=EvisitorGuestStatus.SENT,
+        )
+        self.assertEqual(evisitor_summary_for_reservation(reservation), "complete")
+
+    def test_summary_incomplete_when_guest_not_sent(self):
+        reservation = Reservation.objects.create(
+            external_id="sum-2",
+            check_in_date=date(2026, 6, 1),
+            check_out_date=date(2026, 6, 3),
+        )
+        Guest.objects.create(
+            reservation=reservation,
+            first_name="A",
+            last_name="B",
+            evisitor_status=EvisitorGuestStatus.NOT_SENT,
+        )
+        self.assertEqual(evisitor_summary_for_reservation(reservation), "incomplete")
 
 
 class DocumentScanIngestViewTests(TestCase):

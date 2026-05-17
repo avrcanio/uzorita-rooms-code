@@ -15,8 +15,24 @@ from rest_framework.views import APIView
 
 from reception.ical.placeholders import exclude_ical_placeholder_reservations
 
-from .models import DocumentScanLog, DocumentScanStatus, Guest, IDDocument, Reservation, ReservationUnit
-from rest_framework.exceptions import NotFound
+from .models import (
+    DocumentScanLog,
+    DocumentScanStatus,
+    EvisitorGuestStatus,
+    Guest,
+    IDDocument,
+    Reservation,
+    ReservationStatus,
+    ReservationUnit,
+)
+from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
+
+from reception.evisitor.exceptions import (
+    EvisitorApiError,
+    EvisitorConfigError,
+    EvisitorValidationError,
+)
+from reception.evisitor.service import submit_guest_checkin
 
 from .serializers import (
     GuestCreateSerializer,
@@ -74,7 +90,8 @@ class ReservationTimelineListView(generics.ListAPIView):
         period_to = self._parse_date("period_to")
         if period_from and period_to:
             queryset = queryset.filter(
-                Q(check_in_date__gte=period_from, check_in_date__lte=period_to)
+                Q(status=ReservationStatus.CHECKED_IN)
+                | Q(check_in_date__gte=period_from, check_in_date__lte=period_to)
                 | Q(check_out_date__gte=period_from, check_out_date__lte=period_to)
             )
 
@@ -370,6 +387,64 @@ class DocumentScanIngestView(APIView):
             return int(value)
         except (TypeError, ValueError):
             return None
+
+
+class EvisitorSubmitView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, reservation_id: int, guest_id: int):
+        guest = Guest.objects.filter(
+            pk=guest_id,
+            reservation_id=reservation_id,
+        ).first()
+        if not guest:
+            raise NotFound("Gost nije pronađen.")
+
+        force_retry = bool(request.data.get("force_retry")) if isinstance(
+            request.data, dict
+        ) else False
+
+        if (
+            guest.evisitor_status == EvisitorGuestStatus.SENT
+            and not force_retry
+        ):
+            return Response(
+                {
+                    "status": EvisitorGuestStatus.SENT,
+                    "registration_id": str(guest.evisitor_registration_id or ""),
+                    "message": "Gost je već prijavljen u eVisitor.",
+                }
+            )
+
+        try:
+            submission = submit_guest_checkin(
+                guest,
+                user=request.user,
+                force_retry=force_retry,
+            )
+        except EvisitorValidationError as exc:
+            raise DRFValidationError(
+                exc.field_errors or {"detail": str(exc)}
+            ) from exc
+        except EvisitorConfigError as exc:
+            raise DRFValidationError({"detail": str(exc)}) from exc
+        except EvisitorApiError as exc:
+            return Response(
+                {
+                    "status": EvisitorGuestStatus.FAILED,
+                    "user_message": exc.user_message or str(exc),
+                    "system_message": exc.system_message,
+                },
+                status=502,
+            )
+
+        return Response(
+            {
+                "status": submission.status,
+                "registration_id": str(submission.registration_id),
+                "submitted_at": submission.submitted_at,
+            }
+        )
 
 
 ## NOTE:

@@ -3,6 +3,7 @@ from django.urls import path
 from .booking_xls_views import BookingXlsImportView
 from .views import (
     DocumentScanIngestView,
+    EvisitorSubmitView,
     ReceptionHealthView,
     ReservationDetailView,
     ReservationGuestDetailView,
@@ -29,5 +30,10 @@ urlpatterns = [
         "reservations/<int:reservation_id>/guests/<int:guest_id>/document-scan/",
         DocumentScanIngestView.as_view(),
         name="api-reservation-guest-document-scan",
+    ),
+    path(
+        "reservations/<int:reservation_id>/guests/<int:guest_id>/evisitor-submit/",
+        EvisitorSubmitView.as_view(),
+        name="api-reservation-guest-evisitor-submit",
     ),
 ]

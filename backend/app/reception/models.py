@@ -187,6 +187,8 @@ class Guest(models.Model):
     mrz_raw_text = models.TextField(blank=True)
     mrz_verified = models.BooleanField(null=True, blank=True)
     is_primary = models.BooleanField(default=False)
+    evisitor_status = models.CharField(max_length=16, blank=True, default="")
+    evisitor_registration_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -234,6 +236,44 @@ class IDDocument(models.Model):
 
     def __str__(self) -> str:
         return f"IDDocument #{self.id} for guest {self.guest_id}"
+
+
+class EvisitorGuestStatus(models.TextChoices):
+    NOT_SENT = "not_sent", "Nije poslano"
+    PENDING = "pending", "U tijeku"
+    SENT = "sent", "Poslano"
+    FAILED = "failed", "Neuspjesno"
+
+
+class EvisitorSubmission(models.Model):
+    guest = models.ForeignKey(
+        Guest,
+        on_delete=models.CASCADE,
+        related_name="evisitor_submissions",
+    )
+    registration_id = models.UUIDField()
+    status = models.CharField(max_length=16, choices=EvisitorGuestStatus.choices)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    submitted_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="evisitor_submissions",
+    )
+    error_user_message = models.TextField(blank=True)
+    error_system_message = models.TextField(blank=True)
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        verbose_name = "eVisitor prijava"
+        verbose_name_plural = "eVisitor prijave"
+
+    def __str__(self) -> str:
+        return f"eVisitor {self.status} guest={self.guest_id} #{self.id}"
 
 
 class DocumentScanStatus(models.TextChoices):

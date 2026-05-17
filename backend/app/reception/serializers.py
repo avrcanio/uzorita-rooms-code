@@ -2,7 +2,9 @@ from rest_framework import serializers
 
 from reception.reservation_units import joined_room_names
 
-from .models import Guest, Reservation, ReservationStatus, ReservationUnit
+from reception.evisitor.summary import evisitor_status_for_guest, evisitor_summary_for_reservation
+
+from .models import EvisitorGuestStatus, Guest, Reservation, ReservationStatus, ReservationUnit
 
 
 def payment_status_key(raw: str) -> str:
@@ -23,6 +25,9 @@ def payment_status_key(raw: str) -> str:
 
 
 class GuestLiteSerializer(serializers.ModelSerializer):
+    evisitor_status = serializers.SerializerMethodField()
+    evisitor_error = serializers.SerializerMethodField()
+
     class Meta:
         model = Guest
         fields = (
@@ -34,7 +39,24 @@ class GuestLiteSerializer(serializers.ModelSerializer):
             "nationality",
             "document_number",
             "date_of_expiry",
+            "evisitor_status",
+            "evisitor_error",
         )
+
+    def get_evisitor_status(self, obj) -> str:
+        return evisitor_status_for_guest(obj)
+
+    def get_evisitor_error(self, obj) -> str:
+        if evisitor_status_for_guest(obj) != EvisitorGuestStatus.FAILED:
+            return ""
+        submission = (
+            obj.evisitor_submissions.filter(status=EvisitorGuestStatus.FAILED)
+            .order_by("-created_at")
+            .first()
+        )
+        if submission:
+            return submission.error_user_message or submission.error_system_message or ""
+        return ""
 
 
 class ReservationUnitSerializer(serializers.ModelSerializer):
@@ -63,6 +85,7 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
     room_name = serializers.SerializerMethodField()
     effective_units_count = serializers.SerializerMethodField()
     payment_status_key = serializers.SerializerMethodField()
+    evisitor_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -103,6 +126,7 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
             "primary_guest_name",
             "primary_guest_nationality_iso2",
             "guests",
+            "evisitor_summary",
         )
 
     def get_primary_guest_name(self, obj):
@@ -142,6 +166,9 @@ class ReservationTimelineSerializer(serializers.ModelSerializer):
     def get_payment_status_key(self, obj) -> str:
         return payment_status_key(obj.payment_status)
 
+    def get_evisitor_summary(self, obj) -> str:
+        return evisitor_summary_for_reservation(obj)
+
 
 _ALLOWED_STATUS_TRANSITIONS = {
     ReservationStatus.EXPECTED: {
@@ -173,6 +200,14 @@ class ReservationUpdateSerializer(serializers.ModelSerializer):
             if value not in next_allowed:
                 raise serializers.ValidationError(
                     "Nedozvoljen prijelaz statusa rezervacije."
+                )
+            if (
+                current == ReservationStatus.CHECKED_IN
+                and value == ReservationStatus.CHECKED_OUT
+                and evisitor_summary_for_reservation(instance) != "complete"
+            ):
+                raise serializers.ValidationError(
+                    "Odjava nije moguća dok svi gosti nisu prijavljeni u eVisitor."
                 )
         return value
 
