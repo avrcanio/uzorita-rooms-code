@@ -97,6 +97,22 @@ class BookingExtranetApiTests(TestCase):
 
     @override_settings(BOOKING_EXTRANET_VNC_ENABLED=True)
     @patch("reception.booking_extranet.vnc._redis_client")
+    def test_vnc_auth_allows_valid_token_without_session(self, mock_redis_factory):
+        from reception.booking_extranet.vnc import issue_vnc_token
+
+        mock_client = mock_redis_factory.return_value
+        store: dict[str, str] = {}
+        mock_client.setex.side_effect = lambda key, _ttl, value: store.__setitem__(key, value)
+        mock_client.get.side_effect = lambda key: store.get(key)
+        mock_client.delete.side_effect = lambda key: store.pop(key, None)
+
+        token = issue_vnc_token(user_id=self.user.id)
+        anon = APIClient()
+        response = anon.get(f"/api/reception/booking-extranet/vnc/auth/?token={token}")
+        self.assertEqual(response.status_code, 200)
+
+    @override_settings(BOOKING_EXTRANET_VNC_ENABLED=True)
+    @patch("reception.booking_extranet.vnc._redis_client")
     def test_vnc_auth_allows_authenticated_session_with_token(self, mock_redis_factory):
         from reception.booking_extranet.vnc import issue_vnc_token
 
@@ -121,6 +137,18 @@ class BookingExtranetApiTests(TestCase):
     def test_vnc_auth_disabled_returns_503(self):
         response = self.client.get("/api/reception/booking-extranet/vnc/auth/")
         self.assertEqual(response.status_code, 503)
+
+    @override_settings(BOOKING_EXTRANET_VNC_ENABLED=True, BOOKING_EXTRANET_HEADED=True)
+    @patch("reception.booking_extranet.tasks.booking_extranet_vnc_continue_task")
+    def test_vnc_continue_dispatches_to_celery_worker(self, mock_task):
+        mock_result = mock_task.delay.return_value
+        mock_result.get.return_value = {
+            "connection": {"status": "connected", "hotel_id": "4181954"},
+        }
+        response = self.client.post("/api/reception/booking-extranet/vnc/continue/")
+        self.assertEqual(response.status_code, 200)
+        mock_task.delay.assert_called_once_with(user_id=self.user.id)
+        mock_result.get.assert_called_once()
 
     @override_settings(BOOKING_EXTRANET_CONNECT_MODE="automatic")
     def test_auto_connect_rate_limit(self):

@@ -269,6 +269,11 @@ BOOKING_EXTRANET_VNC_TOKEN_TTL_SECONDS = int(
     os.getenv("BOOKING_EXTRANET_VNC_TOKEN_TTL_SECONDS", "1200")
 )
 BOOKING_EXTRANET_HEADED = env_bool("BOOKING_EXTRANET_HEADED", default=False)
+# Tailscale exit node hostname (laptop) — enables VNC login from server via residential IP
+BOOKING_EXTRANET_TAILSCALE_EXIT_NODE = os.getenv(
+    "BOOKING_EXTRANET_TAILSCALE_EXIT_NODE",
+    os.getenv("TAILSCALE_EXIT_NODE", ""),
+).strip()
 
 CELERY_TASK_ROUTES = {
     "reception.booking_extranet.tasks.booking_extranet_start_connect_task": {
@@ -281,6 +286,9 @@ CELERY_TASK_ROUTES = {
         "queue": BOOKING_EXTRANET_CELERY_QUEUE,
     },
     "reception.booking_extranet.tasks.booking_extranet_fetch_reservation_task": {
+        "queue": BOOKING_EXTRANET_CELERY_QUEUE,
+    },
+    "reception.booking_extranet.tasks.booking_extranet_vnc_continue_task": {
         "queue": BOOKING_EXTRANET_CELERY_QUEUE,
     },
 }

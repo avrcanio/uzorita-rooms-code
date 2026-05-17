@@ -53,7 +53,7 @@ const BOOKING_STATUS_SHORT: Record<BookingExtranetStatus, string> = {
   disconnected: "Extranet: nije povezano",
   connecting: "Extranet: povezivanje…",
   needs_2fa: "Extranet: treba SMS kod",
-  needs_human: "Extranet: CAPTCHA — RustDesk",
+  needs_human: "Extranet: CAPTCHA — VNC",
   connected: "Extranet: povezano",
   expired: "Extranet: sesija istekla",
   error: "Extranet: greška",
