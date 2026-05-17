@@ -14,6 +14,7 @@ x-uzorita-backend-env: &uzorita-backend-env
 
 x-uzorita-backend-volumes: &uzorita-backend-volumes
   - ./app:/app
+  - booking_browser_data:/data/booking_browser
 
 services:
   django:
@@ -79,6 +80,40 @@ services:
       - hetzner_net
     restart: unless-stopped
 
+  celery-booking-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.booking-browser
+    image: uzorita-celery-booking-browser:local
+    container_name: uzorita-celery-booking-browser
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      <<: *uzorita-backend-env
+      DISPLAY: ":99"
+      BOOKING_EXTRANET_VNC_DISPLAY: ":99"
+    volumes:
+      - ./app:/app
+      - booking_browser_data:/data/booking_browser
+    networks:
+      - hetzner_net
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.rooms-booking-vnc.rule=Host(`rooms.uzorita.hr`) && PathPrefix(`/booking-vnc`)
+      - traefik.http.routers.rooms-booking-vnc.entrypoints=websecure
+      - traefik.http.routers.rooms-booking-vnc.tls=true
+      - traefik.http.routers.rooms-booking-vnc.tls.certresolver=le
+      - traefik.http.routers.rooms-booking-vnc.priority=150
+      - traefik.http.routers.rooms-booking-vnc.middlewares=rooms-booking-vnc-auth,rooms-booking-vnc-stripprefix
+      - traefik.http.middlewares.rooms-booking-vnc-auth.forwardauth.address=http://uzorita-django:8000/api/reception/booking-extranet/vnc/auth/
+      - traefik.http.middlewares.rooms-booking-vnc-auth.forwardauth.trustForwardHeader=true
+      - traefik.http.middlewares.rooms-booking-vnc-stripprefix.stripprefix.prefixes=/booking-vnc
+      - traefik.http.services.rooms-booking-vnc.loadbalancer.server.port=6080
+    restart: unless-stopped
+
   paddle-ocr-fastapi:
     build:
       context: ../ocr_service
@@ -105,6 +140,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 180s
+
+volumes:
+  booking_browser_data:
 
 networks:
   hetzner_net:

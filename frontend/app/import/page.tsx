@@ -33,6 +33,32 @@ type ImportResponse = {
   dry_run: boolean;
 };
 
+type BookingExtranetStatus =
+  | "disconnected"
+  | "connecting"
+  | "needs_2fa"
+  | "needs_human"
+  | "connected"
+  | "expired"
+  | "error";
+
+type BookingExtranetConnection = {
+  status: BookingExtranetStatus;
+  enabled: boolean;
+  last_ok_at: string | null;
+  last_error: string;
+};
+
+const BOOKING_STATUS_SHORT: Record<BookingExtranetStatus, string> = {
+  disconnected: "Extranet: nije povezano",
+  connecting: "Extranet: povezivanje…",
+  needs_2fa: "Extranet: treba SMS kod",
+  needs_human: "Extranet: CAPTCHA — RustDesk",
+  connected: "Extranet: povezano",
+  expired: "Extranet: sesija istekla",
+  error: "Extranet: greška",
+};
+
 function getCsrfTokenFromCookie(): string {
   return (
     document.cookie
@@ -191,6 +217,7 @@ export default function ImportPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [bookingConn, setBookingConn] = useState<BookingExtranetConnection | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -207,6 +234,18 @@ export default function ImportPage() {
         }
         if (!response.ok) throw new Error(`Auth greška (${response.status})`);
         setMe((await response.json()) as MeResponse);
+        try {
+          const connRes = await fetch("/api/reception/booking-extranet/connection/", {
+            signal: controller.signal,
+            credentials: "include",
+            headers: { Accept: "application/json" },
+          });
+          if (connRes.ok) {
+            setBookingConn((await connRes.json()) as BookingExtranetConnection);
+          }
+        } catch {
+          /* extranet status optional on import page */
+        }
         setAuthReady(true);
       } catch {
         if (!controller.signal.aborted) router.replace("/login?next=/import");
@@ -334,6 +373,7 @@ export default function ImportPage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Link href="/settings/booking" className="rounded-full border border-brand-gold/40 bg-black/40 px-4 py-2 text-sm hover:bg-brand-gold/20">Booking</Link>
               <Link href="/" className="rounded-full border border-brand-gold/40 bg-black/40 px-4 py-2 text-sm hover:bg-brand-gold/20">Timeline</Link>
               <button type="button" onClick={logout} className="rounded-full border border-brand-gold/40 bg-black/40 px-4 py-2 text-sm hover:bg-brand-gold/20">Odjava</button>
             </div>
@@ -342,6 +382,23 @@ export default function ImportPage() {
         {!authReady && <p className="text-brand-cream/80">Provjera autentifikacije...</p>}
         {authReady && (
           <>
+            {bookingConn?.enabled && (
+              <Link
+                href="/settings/booking"
+                className={[
+                  "block rounded-xl border px-4 py-3 text-sm transition-colors",
+                  bookingConn.status === "connected"
+                    ? "border-emerald-400/40 bg-emerald-950/25 text-emerald-100 hover:bg-emerald-950/40"
+                    : "border-amber-400/40 bg-amber-950/25 text-amber-100 hover:bg-amber-950/40",
+                ].join(" ")}
+              >
+                <span className="font-medium">{BOOKING_STATUS_SHORT[bookingConn.status]}</span>
+                {bookingConn.status !== "connected" && bookingConn.last_error ? (
+                  <span className="mt-1 block text-xs opacity-90">{bookingConn.last_error}</span>
+                ) : null}
+                <span className="mt-1 block text-xs underline opacity-80">Postavke → Booking extranet</span>
+              </Link>
+            )}
             <section className="rounded-2xl border border-brand-gold/25 bg-black/35 p-5 sm:p-7">
               <p className="font-mono text-xs uppercase tracking-[0.22em] text-brand-gold">Booking XLS import</p>
               <p className="mt-2 text-sm text-brand-cream/75">

@@ -146,6 +146,26 @@ class BookingEmailStubTests(TestCase):
         inbound.refresh_from_db()
         self.assertEqual(inbound.parse_status, ParseStatus.PARSED)
 
+    @override_settings(BOOKING_EXTRANET_ENABLED=True)
+    @patch("reception.booking_extranet.triggers.enqueue_fetch_after_email_stub", return_value=99)
+    def test_stub_enqueues_extranet_fetch_when_enabled(self, mock_enqueue):
+        from reception.models import BookingExtranetConnection, BookingExtranetStatus
+
+        conn = BookingExtranetConnection.get_solo()
+        conn.status = BookingExtranetStatus.CONNECTED
+        conn.save()
+
+        inbound = InboundEmail.objects.create(
+            message_id="test-stub-fetch-5581435138",
+            mailbox="room_reservations@uzorita.hr",
+            subject=self.SUBJECT,
+            body_html=self.BODY_HTML,
+        )
+        result = process_booking_inbound_email(inbound_email_id=inbound.id)
+        self.assertTrue(result.get("stub"))
+        self.assertEqual(result.get("extranet_fetch_job_id"), 99)
+        mock_enqueue.assert_called_once()
+
 
 class BookingImportGuestEmailTests(TestCase):
     def test_existing_guest_booking_email_not_overwritten_by_property_mailbox(self):

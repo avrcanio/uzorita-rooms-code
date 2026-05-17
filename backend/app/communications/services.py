@@ -146,13 +146,26 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
                     inbound.save(
                         update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"]
                     )
-                    return {
+                    extranet_job_id = None
+                    if payload.kind in {"new", "modify"}:
+                        from reception.booking_extranet.triggers import enqueue_fetch_after_email_stub
+
+                        extranet_job_id = enqueue_fetch_after_email_stub(
+                            inbound_email_id=inbound.id,
+                            booking_number=payload.booking_number,
+                            body_html=getattr(inbound, "body_html", "") or "",
+                            body_text=inbound.body_text or "",
+                        )
+                    result_stub: dict[str, Any] = {
                         "status": "parsed",
                         "external_id": payload.booking_number,
                         "reservation_ids": [stub_result.reservation_id],
                         "stub": True,
                         "missing": missing,
                     }
+                    if extranet_job_id:
+                        result_stub["extranet_fetch_job_id"] = extranet_job_id
+                    return result_stub
 
             inbound.parse_status = ParseStatus.PARTIAL
             _record_error(

@@ -235,6 +235,56 @@ EVISITOR_DEFAULT_PAYMENT_CATEGORY = os.getenv("EVISITOR_DEFAULT_PAYMENT_CATEGORY
 EVISITOR_DEFAULT_STAY_TIME_FROM = os.getenv("EVISITOR_DEFAULT_STAY_TIME_FROM", "14:00")
 EVISITOR_DEFAULT_STAY_TIME_UNTIL = os.getenv("EVISITOR_DEFAULT_STAY_TIME_UNTIL", "10:00")
 
+# Booking.com extranet (Playwright session; credentials samo u .env na serveru)
+BOOKING_EXTRANET_ENABLED = env_bool("BOOKING_EXTRANET_ENABLED", default=False)
+BOOKING_EXTRANET_USERNAME = os.getenv("BOOKING_EXTRANET_USERNAME", "")
+BOOKING_EXTRANET_PASSWORD = os.getenv("BOOKING_EXTRANET_PASSWORD", "")
+BOOKING_EXTRANET_HOTEL_ID = os.getenv("BOOKING_EXTRANET_HOTEL_ID", "4181954")
+BOOKING_EXTRANET_LOGIN_URL = os.getenv("BOOKING_EXTRANET_LOGIN_URL", "")
+BOOKING_EXTRANET_SUCCESS_URL_CONTAINS = os.getenv(
+    "BOOKING_EXTRANET_SUCCESS_URL_CONTAINS",
+    "search_reservations.html",
+)
+BOOKING_EXTRANET_STORAGE_DIR = os.getenv("BOOKING_EXTRANET_STORAGE_DIR", "/data/booking_browser")
+BOOKING_EXTRANET_FERNET_KEY = os.getenv("BOOKING_EXTRANET_FERNET_KEY", "")
+BOOKING_EXTRANET_CONNECT_MODE = os.getenv(
+    "BOOKING_EXTRANET_CONNECT_MODE",
+    "human_assisted",
+).strip().lower()
+BOOKING_EXTRANET_AUTO_CONNECT_MIN_HOURS = int(
+    os.getenv("BOOKING_EXTRANET_AUTO_CONNECT_MIN_HOURS", "24")
+)
+BOOKING_EXTRANET_HEALTH_CHECK_URL = os.getenv(
+    "BOOKING_EXTRANET_HEALTH_CHECK_URL",
+    "https://admin.booking.com/hotel/hoteladmin/extranet_ng/manage/search_reservations.html",
+)
+BOOKING_EXTRANET_CELERY_QUEUE = "booking_browser"
+BOOKING_EXTRANET_VNC_ENABLED = env_bool("BOOKING_EXTRANET_VNC_ENABLED", default=False)
+BOOKING_EXTRANET_VNC_DISPLAY = os.getenv("BOOKING_EXTRANET_VNC_DISPLAY", ":99")
+BOOKING_EXTRANET_VNC_PUBLIC_PATH = os.getenv(
+    "BOOKING_EXTRANET_VNC_PUBLIC_PATH",
+    "/booking-vnc",
+).rstrip("/") or "/booking-vnc"
+BOOKING_EXTRANET_VNC_TOKEN_TTL_SECONDS = int(
+    os.getenv("BOOKING_EXTRANET_VNC_TOKEN_TTL_SECONDS", "1200")
+)
+BOOKING_EXTRANET_HEADED = env_bool("BOOKING_EXTRANET_HEADED", default=False)
+
+CELERY_TASK_ROUTES = {
+    "reception.booking_extranet.tasks.booking_extranet_start_connect_task": {
+        "queue": BOOKING_EXTRANET_CELERY_QUEUE,
+    },
+    "reception.booking_extranet.tasks.booking_extranet_verify_2fa_task": {
+        "queue": BOOKING_EXTRANET_CELERY_QUEUE,
+    },
+    "reception.booking_extranet.tasks.check_booking_extranet_session_task": {
+        "queue": BOOKING_EXTRANET_CELERY_QUEUE,
+    },
+    "reception.booking_extranet.tasks.booking_extranet_fetch_reservation_task": {
+        "queue": BOOKING_EXTRANET_CELERY_QUEUE,
+    },
+}
+
 CELERY_BEAT_SCHEDULE = {
     "booking-email-pipeline": {
         "task": "communications.tasks.run_booking_email_pipeline_task",
@@ -245,5 +295,9 @@ CELERY_BEAT_SCHEDULE = {
         "task": "reception.tasks.sync_booking_ical_task",
         "schedule": crontab(minute="*/30"),
         "kwargs": {"feed": "all"},
+    },
+    "booking-extranet-health-check": {
+        "task": "reception.booking_extranet.tasks.check_booking_extranet_session_task",
+        "schedule": crontab(minute=15, hour="*/6"),
     },
 }

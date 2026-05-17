@@ -1,8 +1,11 @@
 from django.contrib import admin, messages
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 
 from reception.reservation_units import joined_room_names
 
 from .models import (
+    BookingExtranetConnection,
     BookingIcalFeed,
     DocumentScanLog,
     EvisitorSubmission,
@@ -175,6 +178,53 @@ class BookingIcalFeedAdmin(admin.ModelAdmin):
             feed.regenerate_export_token()
             count += 1
         self.message_user(request, f"Regenerated export token for {count} feed(s).", messages.SUCCESS)
+
+
+@admin.register(BookingExtranetConnection)
+class BookingExtranetConnectionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "status",
+        "hotel_id",
+        "storage_version",
+        "last_ok_at",
+        "last_connect_at",
+        "connected_by",
+        "updated_at",
+    )
+    list_filter = ("status",)
+    readonly_fields = (
+        "storage_version",
+        "storage_path",
+        "last_ok_at",
+        "last_connect_at",
+        "updated_at",
+    )
+    fields = (
+        "status",
+        "hotel_id",
+        "storage_version",
+        "storage_path",
+        "last_ok_at",
+        "last_connect_at",
+        "last_error",
+        "connected_by",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return not BookingExtranetConnection.objects.filter(pk=BookingExtranetConnection.SOLO_PK).exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        solo = BookingExtranetConnection.get_solo()
+        url = reverse(
+            "admin:reception_bookingextranetconnection_change",
+            args=[solo.pk],
+        )
+        return HttpResponseRedirect(url)
 
 
 @admin.register(DocumentScanLog)

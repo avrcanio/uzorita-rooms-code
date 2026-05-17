@@ -357,3 +357,117 @@ class BookingIcalFeed(models.Model):
     def regenerate_export_token(self) -> None:
         self.export_token = uuid.uuid4()
         self.save(update_fields=["export_token", "updated_at"])
+
+
+class BookingExtranetStatus(models.TextChoices):
+    DISCONNECTED = "disconnected", "Nije povezano"
+    CONNECTING = "connecting", "Povezivanje"
+    NEEDS_2FA = "needs_2fa", "Potreban 2FA kod"
+    NEEDS_HUMAN = "needs_human", "Potreban ručni korak (CAPTCHA)"
+    CONNECTED = "connected", "Povezano"
+    EXPIRED = "expired", "Sesija istekla"
+    ERROR = "error", "Greška"
+
+
+class BookingExtranetConnection(models.Model):
+    """Singleton per deployment: Playwright storage_state session for Booking.com extranet."""
+
+    SOLO_PK = 1
+
+    status = models.CharField(
+        max_length=32,
+        choices=BookingExtranetStatus.choices,
+        default=BookingExtranetStatus.DISCONNECTED,
+    )
+    hotel_id = models.CharField(max_length=32, blank=True, default="")
+    storage_version = models.PositiveIntegerField(default=0)
+    storage_path = models.CharField(
+        max_length=256,
+        default="state.enc",
+        help_text="Relative path under BOOKING_EXTRANET_STORAGE_DIR.",
+    )
+    last_ok_at = models.DateTimeField(null=True, blank=True)
+    last_connect_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    connected_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="booking_extranet_connections",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Booking extranet veza"
+        verbose_name_plural = "Booking extranet veza"
+
+    def __str__(self) -> str:
+        return f"Booking extranet ({self.get_status_display()})"
+
+    @classmethod
+    def get_solo(cls) -> "BookingExtranetConnection":
+        obj, _created = cls.objects.get_or_create(
+            pk=cls.SOLO_PK,
+            defaults={
+                "status": BookingExtranetStatus.DISCONNECTED,
+                "storage_path": "state.enc",
+            },
+        )
+        return obj
+
+    def save(self, *args, **kwargs):
+        self.pk = self.SOLO_PK
+        super().save(*args, **kwargs)
+
+
+class BookingExtranetJobKind(models.TextChoices):
+    CONNECT = "connect", "Povezivanje"
+    HEALTH = "health", "Health check"
+    FETCH_RESERVATION = "fetch_reservation", "Dohvat rezervacije"
+
+
+class BookingExtranetJobStatus(models.TextChoices):
+    PENDING = "pending", "Na čekanju"
+    NEEDS_HUMAN = "needs_human", "Potreban ručni korak"
+    RUNNING = "running", "U tijeku"
+    DONE = "done", "Završeno"
+    FAILED = "failed", "Neuspjelo"
+
+
+class BookingExtranetJob(models.Model):
+    kind = models.CharField(max_length=32, choices=BookingExtranetJobKind.choices)
+    status = models.CharField(
+        max_length=32,
+        choices=BookingExtranetJobStatus.choices,
+        default=BookingExtranetJobStatus.PENDING,
+    )
+    inbound_email = models.ForeignKey(
+        "communications.InboundEmail",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="booking_extranet_jobs",
+    )
+    booking_number = models.CharField(max_length=32, blank=True, default="")
+    target_url = models.TextField(blank=True, default="")
+    result_payload = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    celery_task_id = models.CharField(max_length=64, blank=True, default="")
+    created_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="booking_extranet_jobs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Booking extranet zadatak"
+        verbose_name_plural = "Booking extranet zadaci"
+
+    def __str__(self) -> str:
+        return f"{self.kind} ({self.status}) #{self.pk}"
