@@ -1,9 +1,12 @@
+import base64
 from datetime import date, datetime
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.urls import reverse
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -28,6 +31,7 @@ from reception.models import (
     DocumentScanStatus,
     EvisitorGuestStatus,
     Guest,
+    IDDocument,
     ImportSource,
     Reservation,
     ReservationStatus,
@@ -1894,6 +1898,69 @@ class DocumentScanIngestViewTests(TestCase):
         self.assertTrue(response.data["mrz_verified"])
         self.guest.refresh_from_db()
         self.assertTrue(self.guest.mrz_verified)
+
+    def _face_jpeg_b64(self) -> str:
+        from PIL import Image
+
+        buf = BytesIO()
+        Image.new("RGB", (8, 8), (200, 100, 50)).save(buf, format="JPEG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    def _face_photo_url(self):
+        return reverse(
+            "api-reception-guest-face-photo",
+            kwargs={
+                "reservation_id": self.reservation.id,
+                "guest_id": self.guest.id,
+            },
+        )
+
+    def test_nfc_scan_with_face_photo_stores_id_document(self):
+        payload = self._minimal_payload("NFC")
+        payload["biometrija"] = {"fotografija_b64": self._face_jpeg_b64()}
+        response = self.client.post(self._scan_url(), payload, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("scan_status"), DocumentScanStatus.OK)
+        doc = IDDocument.objects.filter(guest=self.guest).first()
+        self.assertIsNotNone(doc)
+        self.assertTrue(doc.face_photo)
+
+    def test_get_face_photo_returns_jpeg_bytes(self):
+        payload = self._minimal_payload("NFC")
+        payload["biometrija"] = {"fotografija_b64": self._face_jpeg_b64()}
+        self.client.post(self._scan_url(), payload, format="json")
+        response = self.client.get(self._face_photo_url())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("image/jpeg", response["Content-Type"])
+        body = b"".join(response.streaming_content)
+        self.assertGreater(len(body), 0)
+
+    def test_get_face_photo_404_when_missing(self):
+        response = self.client.get(self._face_photo_url())
+        self.assertEqual(response.status_code, 404)
+
+    def test_guest_detail_includes_face_photo_url(self):
+        payload = self._minimal_payload("NFC")
+        payload["biometrija"] = {"fotografija_b64": self._face_jpeg_b64()}
+        self.client.post(self._scan_url(), payload, format="json")
+        guest_url = (
+            f"/api/reception/reservations/{self.reservation.id}/"
+            f"guests/{self.guest.id}/"
+        )
+        response = self.client.get(guest_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/face-photo/", response.data["face_photo_url"])
+
+    def test_reservation_detail_includes_guest_face_photo_url(self):
+        payload = self._minimal_payload("NFC")
+        payload["biometrija"] = {"fotografija_b64": self._face_jpeg_b64()}
+        self.client.post(self._scan_url(), payload, format="json")
+        reservation_url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.get(reservation_url)
+        self.assertEqual(response.status_code, 200)
+        guests = response.data.get("guests") or []
+        self.assertEqual(len(guests), 1)
+        self.assertIn("/face-photo/", guests[0]["face_photo_url"])
 
 
 class ReservationGuestCreateApiTests(TestCase):

@@ -4,6 +4,7 @@ from .booking_xls_views import BookingXlsImportView
 from .views import (
     DocumentScanIngestView,
     EvisitorSubmitView,
+    GuestFacePhotoView,
     ReceptionHealthView,
     ReservationDetailView,
     ReservationGuestDetailView,
@@ -25,6 +26,11 @@ urlpatterns = [
         "reservations/<int:reservation_id>/guests/<int:guest_id>/",
         ReservationGuestDetailView.as_view(),
         name="api-reservation-guest-detail",
+    ),
+    path(
+        "reservations/<int:reservation_id>/guests/<int:guest_id>/face-photo/",
+        GuestFacePhotoView.as_view(),
+        name="api-reception-guest-face-photo",
     ),
     path(
         "reservations/<int:reservation_id>/guests/<int:guest_id>/document-scan/",

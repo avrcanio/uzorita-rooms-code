@@ -1,10 +1,12 @@
 from datetime import date as date_type
 import base64
 import json
+import mimetypes
 import time
 
 from django.db.models import Count, Prefetch, Q
 from django.core.files.base import ContentFile
+from django.http import FileResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import generics
@@ -33,6 +35,7 @@ from reception.evisitor.exceptions import (
     EvisitorValidationError,
 )
 from reception.evisitor.service import submit_guest_checkin
+from reception.face_photo import guest_face_photo_document
 
 from .serializers import (
     GuestCreateSerializer,
@@ -40,6 +43,24 @@ from .serializers import (
     ReservationTimelineSerializer,
     ReservationUpdateSerializer,
 )
+
+
+def _guest_face_photo_prefetch() -> Prefetch:
+    return Prefetch(
+        "guests__id_documents",
+        queryset=IDDocument.objects.filter(face_photo__isnull=False)
+        .exclude(face_photo="")
+        .order_by("-created_at"),
+    )
+
+
+def _guest_id_documents_prefetch() -> Prefetch:
+    return Prefetch(
+        "id_documents",
+        queryset=IDDocument.objects.filter(face_photo__isnull=False)
+        .exclude(face_photo="")
+        .order_by("-created_at"),
+    )
 
 
 class ReceptionHealthView(APIView):
@@ -60,6 +81,7 @@ class ReservationTimelineListView(generics.ListAPIView):
             .annotate(guests_count=Count("guests", distinct=True))
             .prefetch_related(
                 Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),
+                _guest_face_photo_prefetch(),
                 Prefetch(
                     "units",
                     queryset=ReservationUnit.objects.order_by("sort_order", "id"),
@@ -126,6 +148,7 @@ class ReservationDetailView(generics.RetrieveUpdateAPIView):
             Reservation.objects.annotate(guests_count=Count("guests", distinct=True))
             .prefetch_related(
                 Prefetch("guests", queryset=Guest.objects.order_by("-is_primary", "id")),
+                _guest_face_photo_prefetch(),
                 Prefetch(
                     "units",
                     queryset=ReservationUnit.objects.order_by("sort_order", "id"),
@@ -173,7 +196,28 @@ class ReservationGuestDetailView(generics.RetrieveUpdateAPIView):
     lookup_url_kwarg = "guest_id"
 
     def get_queryset(self):
-        return Guest.objects.filter(reservation_id=self.kwargs["reservation_id"]).order_by("id")
+        return (
+            Guest.objects.filter(reservation_id=self.kwargs["reservation_id"])
+            .prefetch_related(_guest_id_documents_prefetch())
+            .order_by("id")
+        )
+
+
+class GuestFacePhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, reservation_id: int, guest_id: int):
+        guest = Guest.objects.filter(pk=guest_id, reservation_id=reservation_id).first()
+        if guest is None:
+            raise NotFound("Gost nije pronaden.")
+        doc = guest_face_photo_document(guest)
+        if doc is None or not doc.face_photo:
+            raise NotFound("Fotografija gosta nije dostupna.")
+        content_type, _ = mimetypes.guess_type(doc.face_photo.name)
+        return FileResponse(
+            doc.face_photo.open("rb"),
+            content_type=content_type or "image/jpeg",
+        )
 
 
 class DocumentScanIngestView(APIView):
