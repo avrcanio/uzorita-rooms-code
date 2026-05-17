@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
+from rest_framework.test import APIClient
 
 from communications.booking_parser import _is_blocked_guest_email, _parse_guest_email, parse_booking_email
 from communications.guest_messaging import (
@@ -251,3 +252,87 @@ class GuestMessagingSendTests(TestCase):
         self.assertEqual(sent.to, ["relay@guest.booking.com"])
         self.assertEqual(sent.extra_headers["Message-ID"], "<test-msg-id@uzorita.hr>")
         self.assertEqual(sent.body, "Test poruka")
+
+
+class ReservationGuestMessageApiTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="reception-msg-api",
+            password="test-pass-123",
+            first_name="Recepcija",
+            last_name="Test",
+        )
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.reservation = Reservation.objects.create(
+            external_id="BK-MSG-API",
+            check_in_date="2027-06-01",
+            check_out_date="2027-06-05",
+            status=ReservationStatus.EXPECTED,
+        )
+
+    def _url(self, reservation_id: int | None = None) -> str:
+        rid = reservation_id if reservation_id is not None else self.reservation.pk
+        return f"/api/reception/reservations/{rid}/messages/"
+
+    def test_get_messages_empty_without_conversation(self):
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [])
+
+    def test_get_messages_unknown_reservation_404(self):
+        response = self.client.get(self._url(reservation_id=999999))
+        self.assertEqual(response.status_code, 404)
+
+    def test_post_requires_authentication(self):
+        client = APIClient()
+        response = client.post(self._url(), {"body_text": "Pozdrav"}, format="json")
+        self.assertEqual(response.status_code, 401)
+
+    def test_post_requires_primary_guest_email(self):
+        Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Test",
+            email="",
+            is_primary=True,
+        )
+        response = self.client.post(self._url(), {"body_text": "Pozdrav"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("guest", response.data)
+
+    def test_post_unknown_reservation_404(self):
+        response = self.client.post(
+            self._url(reservation_id=999999),
+            {"body_text": "Pozdrav"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 404)
+
+    @patch("communications.guest_messaging._enqueue_send_guest_email")
+    def test_post_and_get_messages(self, enqueue_mock):
+        Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Test",
+            email="guest@example.com",
+            is_primary=True,
+        )
+        post_response = self.client.post(
+            self._url(),
+            {"body_text": "  Dobro jutro  "},
+            format="json",
+        )
+        self.assertEqual(post_response.status_code, 201)
+        self.assertEqual(post_response.data["direction"], "outbound")
+        self.assertEqual(post_response.data["body_text"], "Dobro jutro")
+        self.assertEqual(post_response.data["status"], OutboundEmailStatus.QUEUED)
+        self.assertEqual(post_response.data["sent_by_name"], "Recepcija Test")
+        self.assertIsNone(post_response.data["from_email"])
+        enqueue_mock.assert_called_once()
+
+        get_response = self.client.get(self._url())
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(len(get_response.data), 1)
+        self.assertEqual(get_response.data[0]["id"], post_response.data["id"])
+        self.assertEqual(get_response.data[0]["body_text"], "Dobro jutro")

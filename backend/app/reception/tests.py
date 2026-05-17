@@ -2078,6 +2078,43 @@ class DocumentScanIngestViewTests(TestCase):
         self.assertEqual(len(guests), 1)
         self.assertIn("/face-photo/", guests[0]["face_photo_url"])
 
+    def test_e2e_nfc_send_face_photo_visible_on_reservation_and_guest_detail(self):
+        """NFC Pošalji → spremljen portret → vidljiv na detalju gosta i rezervacije."""
+        payload = self._minimal_payload("NFC")
+        payload["biometrija"] = {"fotografija_b64": self._face_jpeg_b64()}
+        scan = self.client.post(self._scan_url(), payload, format="json")
+        self.assertEqual(scan.status_code, 200)
+        self.assertEqual(scan.data.get("scan_status"), DocumentScanStatus.OK)
+
+        guest_url = (
+            f"/api/reception/reservations/{self.reservation.id}/"
+            f"guests/{self.guest.id}/"
+        )
+        guest_resp = self.client.get(guest_url)
+        self.assertEqual(guest_resp.status_code, 200)
+        face_url = guest_resp.data["face_photo_url"]
+        self.assertIn("/face-photo/", face_url)
+
+        photo_resp = self.client.get(self._face_photo_url())
+        self.assertEqual(photo_resp.status_code, 200)
+        self.assertIn("image/jpeg", photo_resp["Content-Type"])
+        photo_bytes = b"".join(photo_resp.streaming_content)
+        self.assertGreater(len(photo_bytes), 0)
+
+        reservation_resp = self.client.get(
+            f"/api/reception/reservations/{self.reservation.id}/"
+        )
+        self.assertEqual(reservation_resp.status_code, 200)
+        guests = reservation_resp.data.get("guests") or []
+        self.assertEqual(len(guests), 1)
+        self.assertEqual(guests[0]["face_photo_url"], face_url)
+
+        self.guest.refresh_from_db()
+        self.assertTrue(self.guest.mrz_verified)
+        doc = IDDocument.objects.filter(guest=self.guest).first()
+        self.assertIsNotNone(doc)
+        self.assertTrue(doc.face_photo)
+
 
 class ReservationGuestCreateApiTests(TestCase):
     def setUp(self):

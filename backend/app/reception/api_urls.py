@@ -1,5 +1,7 @@
 from django.urls import path
 
+from communications.views import ReservationGuestMessageListCreateView
+
 from .booking_xls_views import BookingXlsImportView
 from .views import (
     DocumentScanIngestView,
@@ -17,6 +19,11 @@ urlpatterns = [
     path("booking-xls-import/", BookingXlsImportView.as_view(), name="api-booking-xls-import"),
     path("reservations/", ReservationTimelineListView.as_view(), name="api-reservations-list"),
     path("reservations/<int:pk>/", ReservationDetailView.as_view(), name="api-reservations-detail"),
+    path(
+        "reservations/<int:pk>/messages/",
+        ReservationGuestMessageListCreateView.as_view(),
+        name="api-reservation-messages",
+    ),
     path(
         "reservations/<int:reservation_id>/guests/",
         ReservationGuestListCreateView.as_view(),

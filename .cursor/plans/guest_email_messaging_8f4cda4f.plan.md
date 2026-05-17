@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: f1-api
     content: "Faza 1: GET/POST /api/reception/reservations/<pk>/messages/ + serializers + testovi"
-    status: pending
+    status: completed
   - id: f1-flutter
     content: "Faza 1: reception_api, controller, ReservationMessagesSection na detail ekranu"
     status: pending
