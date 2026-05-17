@@ -9,6 +9,7 @@ from reception.evisitor.exceptions import (
 )
 from reception.evisitor.service import checkout_reservation_guests_in_evisitor
 from reception.evisitor.summary import evisitor_status_for_guest, evisitor_summary_for_reservation
+from reception.face_photo import guest_face_photo_url
 
 from .models import EvisitorGuestStatus, Guest, Reservation, ReservationStatus, ReservationUnit
 
@@ -33,6 +34,7 @@ def payment_status_key(raw: str) -> str:
 class GuestLiteSerializer(serializers.ModelSerializer):
     evisitor_status = serializers.SerializerMethodField()
     evisitor_error = serializers.SerializerMethodField()
+    face_photo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Guest
@@ -47,6 +49,7 @@ class GuestLiteSerializer(serializers.ModelSerializer):
             "date_of_expiry",
             "evisitor_status",
             "evisitor_error",
+            "face_photo_url",
         )
 
     def get_evisitor_status(self, obj) -> str:
@@ -63,6 +66,12 @@ class GuestLiteSerializer(serializers.ModelSerializer):
         if submission:
             return submission.error_user_message or submission.error_system_message or ""
         return ""
+
+    def get_face_photo_url(self, obj) -> str:
+        request = self.context.get("request")
+        if not request:
+            return ""
+        return guest_face_photo_url(obj, request)
 
 
 class ReservationUnitSerializer(serializers.ModelSerializer):
@@ -272,10 +281,18 @@ _GUEST_WRITABLE_FIELDS = (
 
 
 class GuestDetailSerializer(serializers.ModelSerializer):
+    face_photo_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Guest
-        fields = ("id", "reservation", *_GUEST_WRITABLE_FIELDS)
-        read_only_fields = ("id", "reservation")
+        fields = ("id", "reservation", "face_photo_url", *_GUEST_WRITABLE_FIELDS)
+        read_only_fields = ("id", "reservation", "face_photo_url")
+
+    def get_face_photo_url(self, obj) -> str:
+        request = self.context.get("request")
+        if not request:
+            return ""
+        return guest_face_photo_url(obj, request)
 
     def update(self, instance, validated_data):
         if validated_data.get("is_primary", False):

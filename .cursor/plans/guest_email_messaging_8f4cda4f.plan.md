@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: f1-send
     content: "Faza 1: guest_messaging.py send servis + Celery send_guest_email_task (SMTP, Message-ID)"
-    status: pending
+    status: completed
   - id: f1-api
     content: "Faza 1: GET/POST /api/reception/reservations/<pk>/messages/ + serializers + testovi"
     status: pending
