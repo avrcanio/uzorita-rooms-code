@@ -389,6 +389,29 @@ class DocumentScanIngestView(APIView):
             return None
 
 
+_EVISITOR_FIELD_LABELS_HR = {
+    "first_name": "Ime",
+    "last_name": "Prezime",
+    "sex": "Spol",
+    "date_of_birth": "Datum rođenja",
+    "nationality": "Državljanstvo",
+    "document_type": "Tip dokumenta",
+    "document_number": "Broj dokumenta",
+    "facility": "Šifra objekta",
+    "stay_dates": "Datumi boravka",
+}
+
+
+def _evisitor_validation_message(exc: EvisitorValidationError, field_errors: dict) -> str:
+    if not field_errors:
+        return str(exc)
+    lines = [
+        f"{_EVISITOR_FIELD_LABELS_HR.get(key, key)}: {msg}"
+        for key, msg in field_errors.items()
+    ]
+    return "Podaci nisu potpuni za eVisitor prijavu.\n" + "\n".join(lines)
+
+
 class EvisitorSubmitView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -423,11 +446,23 @@ class EvisitorSubmitView(APIView):
                 force_retry=force_retry,
             )
         except EvisitorValidationError as exc:
-            raise DRFValidationError(
-                exc.field_errors or {"detail": str(exc)}
-            ) from exc
+            field_errors = exc.field_errors or {}
+            return Response(
+                {
+                    "status": "validation_failed",
+                    "message": _evisitor_validation_message(exc, field_errors),
+                    "field_errors": field_errors,
+                },
+                status=400,
+            )
         except EvisitorConfigError as exc:
-            raise DRFValidationError({"detail": str(exc)}) from exc
+            return Response(
+                {
+                    "status": "config_error",
+                    "message": str(exc),
+                },
+                status=400,
+            )
         except EvisitorApiError as exc:
             return Response(
                 {

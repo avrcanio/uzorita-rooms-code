@@ -1741,6 +1741,9 @@ class EvisitorSubmitViewTests(TestCase):
         url = f"/api/reception/reservations/{self.reservation.id}/guests/{self.guest.id}/evisitor-submit/"
         response = self.client.post(url, {}, format="json")
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["status"], "validation_failed")
+        self.assertIn("document_number", response.data["field_errors"])
+        self.assertIn("Broj dokumenta", response.data["message"])
 
 
 class EvisitorMapperTests(TestCase):
