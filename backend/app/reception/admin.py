@@ -155,6 +155,7 @@ class IDDocumentAdmin(admin.ModelAdmin):
     list_display = ("id", "guest", "verified_at", "verified_by", "created_at")
     list_filter = ("verified_at",)
     search_fields = ("guest__first_name", "guest__last_name", "image_path")
+    readonly_fields = ("front_photo", "back_photo", "face_photo", "signature_photo")
 
 
 @admin.register(BookingIcalFeed)

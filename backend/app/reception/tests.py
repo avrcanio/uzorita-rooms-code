@@ -2117,6 +2117,109 @@ class DocumentScanIngestViewTests(TestCase):
         self.assertTrue(doc.face_photo)
 
 
+class DocumentPhotosUploadViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("doc_photos_upload", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.rt = RoomType.objects.create(code="PHOTO", name_i18n={"en": "Photo Room"})
+        self.room = Room.objects.create(code="P1", room_type=self.rt)
+        self.reservation = Reservation.objects.create(
+            external_id="doc-photos-1",
+            check_in_date=date(2026, 9, 1),
+            check_out_date=date(2026, 9, 3),
+            status=ReservationStatus.EXPECTED,
+        )
+        ReservationUnit.objects.create(
+            reservation=self.reservation,
+            sort_order=0,
+            room_name="Photo Room",
+            room_type=self.rt,
+            room=self.room,
+        )
+        self.guest = Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Foto",
+            last_name="Gost",
+            is_primary=True,
+        )
+
+    @staticmethod
+    def _jpeg(name: str = "front.jpg") -> SimpleUploadedFile:
+        return SimpleUploadedFile(name, b"\xff\xd8\xff\xe0\x00\x10JFIF", content_type="image/jpeg")
+
+    def _url(self, reservation_id=None, guest_id=None):
+        return (
+            f"/api/reception/reservations/{reservation_id or self.reservation.id}/"
+            f"guests/{guest_id if guest_id is not None else self.guest.id}/document-photos/"
+        )
+
+    def test_document_photos_passport_single_front(self):
+        response = self.client.post(
+            self._url(),
+            {
+                "document_type": "passport",
+                "front": self._jpeg("passport_front.jpg"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["front_saved"])
+        self.assertFalse(response.data["back_saved"])
+        self.assertEqual(response.data["document_type"], "passport")
+
+        doc = IDDocument.objects.get(pk=response.data["id_document_id"])
+        self.assertTrue(doc.front_photo)
+        self.assertFalse(doc.back_photo)
+
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.document_type, "Putovnica")
+
+    def test_document_photos_national_id_requires_back(self):
+        response = self.client.post(
+            self._url(),
+            {
+                "document_type": "national_id",
+                "front": self._jpeg("id_front.jpg"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("back", response.data)
+
+    def test_document_photos_national_id_front_and_back(self):
+        response = self.client.post(
+            self._url(),
+            {
+                "document_type": "national_id",
+                "front": self._jpeg("id_front.jpg"),
+                "back": self._jpeg("id_back.jpg"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["front_saved"])
+        self.assertTrue(response.data["back_saved"])
+
+        doc = IDDocument.objects.get(pk=response.data["id_document_id"])
+        self.assertTrue(doc.front_photo)
+        self.assertTrue(doc.back_photo)
+
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.document_type, "Osobna iskaznica")
+
+    def test_document_photos_guest_not_found(self):
+        response = self.client.post(
+            self._url(guest_id=99999),
+            {
+                "document_type": "passport",
+                "front": self._jpeg(),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 404)
+
+
 class ReservationGuestCreateApiTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("guest_create_api", password="test-pass-123")

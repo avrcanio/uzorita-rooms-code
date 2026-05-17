@@ -222,6 +222,8 @@ class IDDocument(models.Model):
     image_path = models.CharField(max_length=500)
     face_photo = models.ImageField(upload_to="id_documents/faces/", null=True, blank=True)
     signature_photo = models.ImageField(upload_to="id_documents/signatures/", null=True, blank=True)
+    front_photo = models.ImageField(upload_to="id_documents/front/", null=True, blank=True)
+    back_photo = models.ImageField(upload_to="id_documents/back/", null=True, blank=True)
     extracted_payload = models.JSONField(default=dict, blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
     verified_by = models.ForeignKey(

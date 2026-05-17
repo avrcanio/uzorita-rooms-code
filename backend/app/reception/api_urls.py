@@ -18,6 +18,7 @@ from .booking_extranet.views import (
 )
 from .booking_xls_views import BookingXlsImportView
 from .statistics_views import ReceptionMonthlyStatisticsView
+from .document_photo_views import DocumentPhotosUploadView
 from .views import (
     DocumentScanIngestView,
     EvisitorSubmitView,
@@ -123,6 +124,11 @@ urlpatterns = [
         "reservations/<int:reservation_id>/guests/<int:guest_id>/document-scan/",
         DocumentScanIngestView.as_view(),
         name="api-reservation-guest-document-scan",
+    ),
+    path(
+        "reservations/<int:reservation_id>/guests/<int:guest_id>/document-photos/",
+        DocumentPhotosUploadView.as_view(),
+        name="api-reservation-guest-document-photos",
     ),
     path(
         "reservations/<int:reservation_id>/guests/<int:guest_id>/evisitor-submit/",
