@@ -7,16 +7,16 @@ todos:
     status: completed
   - id: flutter-api-create
     content: createGuest u reception_api + toCreatePayload na Guest
-    status: in_progress
+    status: completed
   - id: guest-sheets
     content: GuestsActionSheet, GuestPickerSheet, AddGuestMethodSheet
-    status: pending
+    status: completed
   - id: guest-create-screen
     content: GuestCreateScreen + ruta /guests/new
-    status: pending
+    status: completed
   - id: reservation-gosti-ui
     content: Preurediti _DetailSection i _GuestCard; wire handlers u reservation_detail_screen
-    status: pending
+    status: completed
 isProject: false
 ---
 
