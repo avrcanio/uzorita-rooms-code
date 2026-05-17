@@ -54,6 +54,7 @@ from reception.services.ocr_sample_store import (
     save_scan_upload_sample,
 )
 from reception.services.ocr_service import OCRService, normalize_paddle_response, prepare_image_bytes_for_paddle_ocr
+from reception.statistics import aggregate_monthly_statistics
 from rooms.models import Room, RoomType
 
 

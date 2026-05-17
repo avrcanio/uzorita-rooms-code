@@ -3,6 +3,7 @@ from django.urls import path
 from communications.views import ReservationGuestMessageListCreateView
 
 from .booking_xls_views import BookingXlsImportView
+from .statistics_views import ReceptionMonthlyStatisticsView
 from .views import (
     DocumentScanIngestView,
     EvisitorSubmitView,
@@ -17,6 +18,11 @@ from .views import (
 urlpatterns = [
     path("health/", ReceptionHealthView.as_view(), name="api-reception-health"),
     path("booking-xls-import/", BookingXlsImportView.as_view(), name="api-booking-xls-import"),
+    path(
+        "statistics/monthly/",
+        ReceptionMonthlyStatisticsView.as_view(),
+        name="api-reception-statistics-monthly",
+    ),
     path("reservations/", ReservationTimelineListView.as_view(), name="api-reservations-list"),
     path("reservations/<int:pk>/", ReservationDetailView.as_view(), name="api-reservations-detail"),
     path(

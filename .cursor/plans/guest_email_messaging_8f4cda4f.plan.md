@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: f2-flutter-inbound
     content: "Faza 2: Flutter prikaz inbound poruka + refresh"
-    status: pending
+    status: completed
 isProject: false
 ---
 
