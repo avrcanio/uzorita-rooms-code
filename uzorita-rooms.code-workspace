@@ -2,13 +2,14 @@
   "folders": [
     {
       "name": "uzorita-rooms-code",
-      "path": "."
+      "path": "/opt/stacks/uzorita/rooms/code"
     }
   ],
   "settings": {
     "git.enabled": true,
     "git.autoRepositoryDetection": false,
     "git.openRepositoryInParentFolders": "never",
-    "git.ignoreSubmodules": true
+    "git.ignoreSubmodules": true,
+    "git.ignoredRepositories": ["/opt/stacks/uzorita"]
   }
 }
