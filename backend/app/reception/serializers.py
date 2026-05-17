@@ -224,6 +224,23 @@ class GuestCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Guest
         fields = _GUEST_WRITABLE_FIELDS
+        extra_kwargs = {
+            "first_name": {"required": False, "allow_blank": True},
+            "last_name": {"required": False, "allow_blank": True},
+        }
+
+    def validate(self, attrs):
+        first_name = (attrs.get("first_name") or "").strip()
+        last_name = (attrs.get("last_name") or "").strip()
+        if not first_name:
+            attrs["first_name"] = "Novi"
+        else:
+            attrs["first_name"] = first_name
+        if not last_name:
+            attrs["last_name"] = "gost"
+        else:
+            attrs["last_name"] = last_name
+        return attrs
 
     def create(self, validated_data):
         reservation = self.context["reservation"]

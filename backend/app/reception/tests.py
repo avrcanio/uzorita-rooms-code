@@ -1737,6 +1737,22 @@ class ReservationGuestCreateApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_create_empty_names_uses_placeholders_for_mrz_flow(self):
+        response = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["first_name"], "Novi")
+        self.assertEqual(response.data["last_name"], "gost")
+
+    def test_create_blank_names_uses_placeholders(self):
+        response = self.client.post(
+            self._url(),
+            {"first_name": "  ", "last_name": ""},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["first_name"], "Novi")
+        self.assertEqual(response.data["last_name"], "gost")
+
 
 class RoomCalendarViewTests(TestCase):
     def setUp(self):
