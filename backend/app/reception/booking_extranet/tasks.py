@@ -48,29 +48,25 @@ def _headed_connect(user, relative_path: str):
 
     open_headed_context(storage_relative_path=relative_path)
     page = get_page()
+    if is_connected_url(page.url or ""):
+        save_context_state(relative_path=relative_path)
+        clear_active_vnc()
+        apply_connect_result(
+            ConnectResult(
+                outcome=ConnectOutcome.CONNECTED,
+                storage_relative_path=relative_path,
+            ),
+            user=user,
+        )
+        return
+
     result = run_connect_on_page(page, storage_relative_path=relative_path)
 
     if result.outcome == ConnectOutcome.NEEDS_HUMAN:
         if user is not None:
             issue_vnc_token(user_id=user.id)
         apply_connect_result(result, user=user)
-        resolved = wait_until_not_human(
-            page,
-            timeout_s=_HUMAN_WAIT_S,
-            is_resolved=lambda p: is_connected_url(p.url or ""),
-        )
-        if resolved and is_connected_url(page.url or ""):
-            save_context_state(relative_path=relative_path)
-            clear_active_vnc()
-            apply_connect_result(
-                ConnectResult(
-                    outcome=ConnectOutcome.CONNECTED,
-                    storage_relative_path=relative_path,
-                ),
-                user=user,
-            )
-        else:
-            apply_connect_result(ConnectResult(outcome=ConnectOutcome.NEEDS_HUMAN), user=user)
+        # Ne blokiraj worker 15 min — operator rješava u VNC, zatim POST vnc/continue.
         return
 
     if result.outcome == ConnectOutcome.CONNECTED:
@@ -78,6 +74,79 @@ def _headed_connect(user, relative_path: str):
         clear_active_vnc()
 
     apply_connect_result(result, user=user)
+
+
+def _headed_vnc_continue(user, relative_path: str) -> None:
+    """After operator solves CAPTCHA in VNC, verify page and save session on worker."""
+    from reception.booking_extranet.browser_session import (
+        detect_needs_human,
+        get_page,
+        open_headed_context,
+        save_context_state,
+        wait_until_not_human,
+    )
+    from reception.booking_extranet.outcomes import ConnectOutcome, ConnectResult
+    from reception.booking_extranet.urls import is_connected_url
+    from reception.booking_extranet.vnc import clear_active_vnc
+    from reception.models import BookingExtranetJob, BookingExtranetJobStatus, BookingExtranetStatus
+
+    open_headed_context(storage_relative_path=relative_path)
+    page = get_page()
+    page_url = page.url or ""
+
+    if is_connected_url(page_url):
+        save_context_state(relative_path=relative_path)
+        clear_active_vnc()
+        apply_connect_result(
+            ConnectResult(
+                outcome=ConnectOutcome.CONNECTED,
+                storage_relative_path=relative_path,
+            ),
+            user=user,
+        )
+        return
+
+    resolved = wait_until_not_human(
+        page,
+        timeout_s=30,
+        is_resolved=lambda p: is_connected_url(p.url or "") or not detect_needs_human(p),
+    )
+
+    if resolved and is_connected_url(page.url or ""):
+        save_context_state(relative_path=relative_path)
+        clear_active_vnc()
+        apply_connect_result(
+            ConnectResult(
+                outcome=ConnectOutcome.CONNECTED,
+                storage_relative_path=relative_path,
+            ),
+            user=user,
+        )
+        return
+
+    conn = BookingExtranetConnection.get_solo()
+    if conn.status in (
+        BookingExtranetStatus.NEEDS_HUMAN,
+        BookingExtranetStatus.CONNECTING,
+        BookingExtranetStatus.EXPIRED,
+        BookingExtranetStatus.ERROR,
+        BookingExtranetStatus.DISCONNECTED,
+    ):
+        mark_connect_error(
+            "Extranet nije prepoznat u VNC prozoru — prijavite se ili riješite CAPTCHA, zatim Nastavi.",
+            user=user,
+        )
+
+    active_job = (
+        BookingExtranetJob.objects.filter(status=BookingExtranetJobStatus.NEEDS_HUMAN)
+        .order_by("-created_at")
+        .first()
+    )
+    if active_job:
+        booking_extranet_fetch_reservation_task.delay(
+            job_id=active_job.id,
+            user_id=user.id if user else None,
+        )
 
 
 def _headed_health(relative_path: str):
@@ -96,6 +165,48 @@ def _headed_health(relative_path: str):
     return health
 
 
+@shared_task(bind=True, name="reception.booking_extranet.tasks.booking_extranet_vnc_continue_task")
+def booking_extranet_vnc_continue_task(self, *, user_id: int | None = None) -> dict:
+    from reception.booking_extranet.errors import BookingExtranetConnectError
+    from reception.booking_extranet.lock import booking_extranet_connect_lock
+
+    user = _user(user_id)
+    conn = BookingExtranetConnection.get_solo()
+    relative_path = conn.storage_path or "state.enc"
+
+    with booking_extranet_connect_lock(ttl_seconds=120) as acquired:
+        if not acquired:
+            mark_connect_error("Drugi Playwright zadatak je u tijeku.", user=user)
+            return {
+                "error": "Drugi Playwright zadatak je u tijeku.",
+                "connection": serialize_connection(BookingExtranetConnection.get_solo()),
+            }
+
+        try:
+            if _use_headed():
+                _headed_vnc_continue(user, relative_path)
+            else:
+                raise BookingExtranetConnectError(
+                    "VNC nastavi zahtijeva BOOKING_EXTRANET_HEADED i VNC_ENABLED."
+                )
+        except BookingExtranetConnectError as exc:
+            mark_connect_error(str(exc), user=user)
+            return {
+                "error": str(exc),
+                "connection": serialize_connection(BookingExtranetConnection.get_solo()),
+            }
+        except Exception as exc:
+            logger.exception("booking_extranet_vnc_continue failed")
+            mark_connect_error(str(exc), user=user)
+            return {
+                "error": str(exc),
+                "connection": serialize_connection(BookingExtranetConnection.get_solo()),
+            }
+
+    conn = BookingExtranetConnection.get_solo()
+    return {"connection": serialize_connection(conn)}
+
+
 @shared_task(bind=True, name="reception.booking_extranet.tasks.booking_extranet_start_connect_task")
 def booking_extranet_start_connect_task(self, *, user_id: int | None = None) -> dict:
     from reception.booking_extranet.connect import run_connect
@@ -106,7 +217,7 @@ def booking_extranet_start_connect_task(self, *, user_id: int | None = None) -> 
     conn = BookingExtranetConnection.get_solo()
     relative_path = conn.storage_path or "state.enc"
 
-    with booking_extranet_connect_lock(ttl_seconds=_HUMAN_WAIT_S + 120) as acquired:
+    with booking_extranet_connect_lock(ttl_seconds=180) as acquired:
         if not acquired:
             mark_connect_error(
                 "Drugi pokušaj povezivanja je u tijeku. Pričekajte ili uvezite sesiju ručno.",

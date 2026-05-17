@@ -28,10 +28,16 @@ type ConnectionPayload = {
   has_session: boolean;
   auto_connect_allowed: boolean;
   auto_connect_message: string;
+  vnc_start_allowed?: boolean;
+  vnc_start_message?: string;
+  verify_2fa_allowed?: boolean;
+  verify_2fa_message?: string;
   vnc_active?: boolean;
   vnc_url?: string | null;
   active_job_id?: number | null;
   vnc_enabled?: boolean;
+  tailscale_exit_node?: string | null;
+  tailscale_exit_node_enabled?: boolean;
 };
 
 type TaskPollResponse = {
@@ -147,7 +153,6 @@ export default function BookingSettingsPage() {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [pasteError, setPasteError] = useState("");
-  const [rustdeskOpen, setRustdeskOpen] = useState(false);
   const [vncContinuing, setVncContinuing] = useState(false);
 
   const fetchConnection = useCallback(async (signal?: AbortSignal) => {
@@ -305,12 +310,53 @@ export default function BookingSettingsPage() {
     }
   };
 
+  const postVncPrepare = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await fetch("/api/auth/csrf/", { credentials: "include" });
+      const csrf = getCsrfTokenFromCookie();
+      const response = await fetch("/api/reception/booking-extranet/vnc/prepare/", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRFToken": csrf },
+      });
+      const data = (await response.json()) as ConnectionPayload;
+      if (!response.ok) {
+        throw new Error(
+          typeof data === "object" && data !== null && "detail" in data
+            ? String((data as { detail?: string }).detail)
+            : "VNC nije uspio.",
+        );
+      }
+      setConnection(data);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "VNC nije uspio.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const postVncContinue = async () => {
     setVncContinuing(true);
     setError("");
     try {
-      const data = await apiPost("/api/reception/booking-extranet/vnc/continue/");
-      if (data) setConnection(data as ConnectionPayload);
+      await fetch("/api/auth/csrf/", { credentials: "include" });
+      const csrf = getCsrfTokenFromCookie();
+      const response = await fetch("/api/reception/booking-extranet/vnc/continue/", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRFToken": csrf },
+      });
+      const data = (await response.json()) as {
+        detail?: string;
+        connection?: ConnectionPayload;
+        status?: string;
+      };
+      if (data.connection) setConnection(data.connection);
+      if (!response.ok) {
+        throw new Error(data.detail || `Nastavi nije uspjelo (${response.status}).`);
+      }
       await fetchConnection();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Nastavi nije uspjelo.");
@@ -319,14 +365,17 @@ export default function BookingSettingsPage() {
     }
   };
 
-  const showVnc =
-    (connection?.status === "needs_human" || connection?.status === "connecting") &&
-    connection.vnc_active &&
-    connection.vnc_url;
+  const showVnc = Boolean(connection?.vnc_active && connection?.vnc_url);
+
+  const showSaveFromVncHint =
+    connection &&
+    connection.tailscale_exit_node_enabled &&
+    ["expired", "error", "connecting", "needs_human", "disconnected"].includes(connection.status) &&
+    !showVnc;
 
   const showImport =
     connection &&
-    ["disconnected", "needs_human", "expired", "error"].includes(connection.status) &&
+    ["disconnected", "needs_human", "needs_2fa", "expired", "error"].includes(connection.status) &&
     !showVnc;
 
   return (
@@ -374,15 +423,34 @@ export default function BookingSettingsPage() {
                 </div>
                 <div>
                   <dt className="text-brand-cream/50">Način</dt>
-                  <dd>{connection.connect_mode === "automatic" ? "Automatski" : "RustDesk / ručno"}</dd>
+                  <dd>
+                    {connection.connect_mode === "automatic"
+                      ? "Automatski"
+                      : connection.tailscale_exit_node_enabled
+                        ? "VNC (Tailscale)"
+                        : "Ručni uvoz sesije"}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-brand-cream/50">Sesija</dt>
                   <dd>{connection.has_session ? "Na disku" : "Nema"}</dd>
                 </div>
+                {connection.tailscale_exit_node_enabled && connection.tailscale_exit_node ? (
+                  <div>
+                    <dt className="text-brand-cream/50">Tailscale egress</dt>
+                    <dd className="font-mono text-xs">{connection.tailscale_exit_node}</dd>
+                  </div>
+                ) : null}
               </dl>
               {connection.last_error && connection.status !== "connected" ? (
                 <p className="mt-3 text-sm text-amber-200/90">{connection.last_error}</p>
+              ) : null}
+              {connection.status === "expired" && connection.tailscale_exit_node_enabled ? (
+                <p className="mt-3 text-sm text-sky-200/90">
+                  Ako u VNC prozoru već vidite Booking extranet (home), prijava je uspjela — kliknite{" "}
+                  <strong className="font-medium">Spremi sesiju</strong> ispod (ne mora pisati „Povezano” dok ne
+                  spremite).
+                </p>
               ) : null}
               {!connection.enabled ? (
                 <p className="mt-3 text-sm text-red-300">BOOKING_EXTRANET_ENABLED nije uključen na serveru.</p>
@@ -394,13 +462,30 @@ export default function BookingSettingsPage() {
             ["disconnected", "expired", "error"].includes(connection.status) && (
               <section className="rounded-2xl border border-sky-400/35 bg-black/35 p-5 sm:p-7">
                 <p className="font-mono text-xs uppercase tracking-[0.22em] text-brand-gold">Prijava preko VNC</p>
-                <p className="mt-2 text-sm text-brand-cream/80">
-                  Pokrenite prijavu na serveru. Kad Booking traži CAPTCHA, ovdje će se pojaviti prozor za
-                  rješavanje.
-                </p>
+                {connection.tailscale_exit_node_enabled ? (
+                  <p className="mt-2 text-sm text-brand-cream/80">
+                    Pokrenite prijavu na serveru (promet ide preko Tailscale exit nodea{" "}
+                    <span className="font-mono text-brand-gold">{connection.tailscale_exit_node}</span>). Kad Booking
+                    traži CAPTCHA, riješite je u prozoru ispod i kliknite Nastavi.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm text-amber-200/90">
+                    Za VNC prijavu na serveru postavite{" "}
+                    <code className="text-brand-gold">TAILSCALE_EXIT_NODE</code> u backend{" "}
+                    <code className="text-brand-gold">.env</code> i restartajte{" "}
+                    <code className="text-brand-gold">uzorita-django</code>.
+                  </p>
+                )}
+                {connection.vnc_start_message && connection.vnc_start_allowed === false ? (
+                  <p className="mt-2 text-sm text-amber-200/90">{connection.vnc_start_message}</p>
+                ) : null}
                 <button
                   type="button"
-                  disabled={loading || connection.status === "connecting"}
+                  disabled={
+                    loading ||
+                    connection.status === "connecting" ||
+                    connection.vnc_start_allowed === false
+                  }
                   onClick={() =>
                     runWithPoll(
                       "/api/reception/booking-extranet/connection/start/",
@@ -414,25 +499,61 @@ export default function BookingSettingsPage() {
               </section>
             )}
 
+            {showSaveFromVncHint ? (
+              <section className="rounded-2xl border border-emerald-400/40 bg-emerald-950/20 p-5 sm:p-7">
+                <p className="font-mono text-xs uppercase tracking-[0.22em] text-emerald-200">Spremi sesiju iz VNC</p>
+                <p className="mt-2 text-sm text-brand-cream/85">
+                  Vidite li u VNC-u već prijavljeni extranet (stranica home)? Kliknite{" "}
+                  <strong className="font-medium text-brand-cream">Spremi sesiju</strong> — status „Sesija istekla”
+                  nestaje nakon spremanja.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void postVncPrepare()}
+                    className="rounded-full border border-sky-400/50 bg-sky-950/50 px-5 py-2 text-sm font-medium hover:bg-sky-900/40 disabled:opacity-50"
+                  >
+                    Otvori VNC prozor
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading || vncContinuing}
+                    onClick={() => void postVncContinue()}
+                    className="rounded-full border border-emerald-400/50 bg-emerald-900/40 px-5 py-2 text-sm font-medium disabled:opacity-50"
+                  >
+                    {vncContinuing ? "Spremanje…" : "Spremi sesiju"}
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
             {showVnc ? (
-              <section className="rounded-2xl border border-amber-400/40 bg-black/35 p-5 sm:p-7">
-                <p className="font-mono text-xs uppercase tracking-[0.22em] text-brand-gold">CAPTCHA u browseru</p>
+              <section className="relative z-10 rounded-2xl border border-amber-400/40 bg-black/35 p-5 sm:p-7">
+                <p className="font-mono text-xs uppercase tracking-[0.22em] text-brand-gold">VNC browser</p>
                 <p className="mt-2 text-sm text-brand-cream/80">
-                  Riješite provjeru u prozoru ispod (isti browser na serveru), zatim kliknite Nastavi.
+                  Kad vidite Booking extranet (npr. home), kliknite{" "}
+                  <strong className="font-medium text-brand-cream">Spremi sesiju</strong>. CAPTCHA riješite u prozoru
+                  prije toga ako se pojavi.
+                </p>
+                <p className="mt-1 text-xs text-brand-cream/55">
+                  Ako piše „Connecting” ili „connection is closed”, kliknite Osvježi status ili Otvori VNC u novom
+                  prozoru.
                 </p>
                 <iframe
+                  key={connection.vnc_url}
                   src={connection.vnc_url!}
                   title="Booking CAPTCHA"
-                  className="mt-4 h-[min(70vh,720px)] w-full rounded-xl border border-brand-gold/30 bg-black"
+                  className="relative z-0 mt-4 h-[min(70vh,720px)] w-full rounded-xl border border-brand-gold/30 bg-black"
                 />
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="relative z-20 mt-4 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     disabled={loading || vncContinuing}
                     onClick={() => void postVncContinue()}
                     className="rounded-full border border-brand-gold/50 bg-brand-gold/25 px-5 py-2 text-sm font-medium disabled:opacity-50"
                   >
-                    {vncContinuing ? "Provjera…" : "Nastavi"}
+                    {vncContinuing ? "Spremanje…" : "Spremi sesiju"}
                   </button>
                   <button
                     type="button"
@@ -442,36 +563,21 @@ export default function BookingSettingsPage() {
                   >
                     Osvježi status
                   </button>
+                  <a
+                    href={
+                      connection.vnc_url!.startsWith("http")
+                        ? connection.vnc_url!
+                        : `${typeof window !== "undefined" ? window.location.origin : ""}${connection.vnc_url!}`
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-full border border-brand-gold/40 px-4 py-2 text-sm text-brand-cream/90 hover:bg-brand-gold/15"
+                  >
+                    Otvori VNC u novom prozoru
+                  </a>
                 </div>
               </section>
             ) : null}
-
-            <section className="rounded-2xl border border-brand-gold/25 bg-black/35 p-5 sm:p-7">
-              <button
-                type="button"
-                onClick={() => setRustdeskOpen((open) => !open)}
-                className="flex w-full items-center justify-between text-left"
-              >
-                <p className="font-mono text-xs uppercase tracking-[0.22em] text-brand-gold">
-                  Ručno (RustDesk) — rezervni put
-                </p>
-                <span className="text-sm text-brand-cream/60">{rustdeskOpen ? "▼" : "▶"}</span>
-              </button>
-              {rustdeskOpen ? (
-                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-brand-cream/85">
-                  <li>RustDesk → admin laptop (ID server <code className="text-brand-gold">rustdesk-tail</code>).</li>
-                  <li>Booking login URL iz server <code className="text-brand-gold">.env</code>.</li>
-                  <li>Riješite CAPTCHA i SMS u Chrome/Edge.</li>
-                  <li>
-                    Kliknite <strong>Zalijepi JSON</strong> i zalijepite export nakon prijave u browseru.
-                  </li>
-                </ol>
-              ) : (
-                <p className="mt-2 text-sm text-brand-cream/60">
-                  Koristite ako VNC iframe nije dostupan ili trebate export storage_state s laptopa.
-                </p>
-              )}
-            </section>
 
             {showImport && (
               <section className="rounded-2xl border border-brand-gold/25 bg-black/35 p-5 sm:p-7">
@@ -583,8 +689,20 @@ export default function BookingSettingsPage() {
             )}
 
             {connection.status === "needs_2fa" && (
-              <section className="rounded-2xl border border-brand-gold/25 bg-black/35 p-5 sm:p-7">
-                <p className="font-mono text-xs uppercase tracking-[0.22em] text-brand-gold">SMS kod</p>
+              <section className="rounded-2xl border border-red-400/40 bg-red-950/25 p-5 sm:p-7">
+                <p className="font-mono text-xs uppercase tracking-[0.22em] text-red-200">SMS limit / 2FA</p>
+                <p className="mt-2 text-sm text-red-100/90">
+                  Booking je vjerojatno privremeno prestao slati SMS jer je bilo previše pokušaja prijave s IP-a
+                  servera. <strong className="font-medium">Ne pokrećite ponovno VNC prijavu.</strong>
+                </p>
+                <p className="mt-2 text-sm text-brand-cream/80">
+                  Pričekajte 24–48 h bez novih pokušaja, ili se prijavite na laptopu i uvezite{" "}
+                  <code className="text-brand-gold">storage_state.json</code> u odjeljku Spremi sesiju.
+                </p>
+                {connection.verify_2fa_message && connection.verify_2fa_allowed === false ? (
+                  <p className="mt-2 text-sm text-amber-200/90">{connection.verify_2fa_message}</p>
+                ) : null}
+                {connection.verify_2fa_allowed === false ? null : (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <input
                     type="text"
@@ -610,6 +728,7 @@ export default function BookingSettingsPage() {
                     Pošalji kod
                   </button>
                 </div>
+                )}
               </section>
             )}
 

@@ -36,6 +36,13 @@ class BookingExtranetUrlTests(TestCase):
         )
         self.assertTrue(is_connected_url(url))
 
+    def test_is_connected_url_home_dashboard(self):
+        url = (
+            "https://admin.booking.com/hotel/hoteladmin/extranet_ng/manage/"
+            "home.html?hotel_id=4181954"
+        )
+        self.assertTrue(is_connected_url(url))
+
 
 @unittest.skipUnless(HAS_PLAYWRIGHT, "playwright not installed")
 @override_settings(

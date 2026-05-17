@@ -10,7 +10,7 @@ from reception.booking_extranet.browser_session import detect_needs_human
 from reception.booking_extranet.fetch_reservation import FetchOutcome, FetchResult, resolve_target_url
 from reception.booking_extranet.session_store import load_storage_state, save_storage_state
 from reception.booking_extranet.url_extract import extract_booking_url_from_text, extract_res_id_from_url
-from reception.booking_extranet.vnc import issue_vnc_token, validate_vnc_token
+from reception.booking_extranet.vnc import build_vnc_url, issue_vnc_token, validate_vnc_token
 from reception.models import BookingExtranetConnection, BookingExtranetStatus
 
 User = get_user_model()
@@ -66,6 +66,12 @@ class BookingExtranetVncTokenTests(TestCase):
         token = issue_vnc_token(user_id=user.id, job_id=42)
         self.assertTrue(validate_vnc_token(token, user_id=user.id))
         self.assertFalse(validate_vnc_token(token, user_id=user.id + 1))
+
+    def test_build_vnc_url_includes_forwardauth_token_query(self):
+        url = build_vnc_url("abc123")
+        self.assertIn("token=abc123", url)
+        self.assertIn("booking-vnc%2Fwebsockify", url)
+        self.assertIn("token%3Dabc123", url)
 
 
 class BookingExtranetSanitizeTests(TestCase):

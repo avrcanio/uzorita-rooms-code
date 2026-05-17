@@ -11,6 +11,8 @@ x-uzorita-backend-env: &uzorita-backend-env
   CELERY_BROKER_URL: redis://infra-redis:6379/1
   CELERY_RESULT_BACKEND: redis://infra-redis:6379/1
   PADDLE_OCR_BASE_URL: http://paddle-ocr-fastapi:8866
+  TAILSCALE_EXIT_NODE: ${TAILSCALE_EXIT_NODE:-}
+  BOOKING_EXTRANET_TAILSCALE_EXIT_NODE: ${BOOKING_EXTRANET_TAILSCALE_EXIT_NODE:-${TAILSCALE_EXIT_NODE:-}}
 
 x-uzorita-backend-volumes: &uzorita-backend-volumes
   - ./app:/app
@@ -53,7 +55,7 @@ services:
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
       python manage.py migrate &&
-      celery -A config worker -l info --concurrency=2"
+      celery -A config worker -l info --concurrency=2 -Q celery"
     env_file:
       - .env
     environment:
@@ -80,22 +82,43 @@ services:
       - hetzner_net
     restart: unless-stopped
 
-  celery-booking-browser:
-    build:
-      context: .
-      dockerfile: Dockerfile.booking-browser
-    image: uzorita-celery-booking-browser:local
-    container_name: uzorita-celery-booking-browser
-    working_dir: /app
+  # Tailscale sidecar: shared network namespace with celery-booking-browser.
+  # Set TAILSCALE_EXIT_NODE to laptop hostname (must advertise exit node in Headscale).
+  tailscale-booking-browser:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-booking-browser
+    hostname: tailscale-booking-browser
     env_file:
       - .env
     environment:
-      <<: *uzorita-backend-env
-      DISPLAY: ":99"
-      BOOKING_EXTRANET_VNC_DISPLAY: ":99"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_AUTHKEY: ${TS_AUTHKEY_BOOKING_BROWSER:-}
+      TS_EXTRA_ARGS: >-
+        --login-server=${TS_LOGIN_SERVER:-https://hs-control.qubitsecured.online}
+        --hostname=${TS_HOSTNAME_BOOKING_BROWSER:-tailscale-booking-browser}
+        --accept-dns=false
+        --accept-routes=true
+        --exit-node=${TAILSCALE_EXIT_NODE:-}
+        --exit-node-allow-lan-access=true
+      TAILSCALE_EXIT_NODE: ${TAILSCALE_EXIT_NODE:-}
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+    devices:
+      - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./app:/app
-      - booking_browser_data:/data/booking_browser
+      - tailscale_booking_state:/var/lib/tailscale
+      - ./scripts/tailscale-booking-healthcheck.sh:/usr/local/bin/tailscale-booking-healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/usr/local/bin/tailscale-booking-healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
     networks:
       - hetzner_net
       - proxy
@@ -107,11 +130,42 @@ services:
       - traefik.http.routers.rooms-booking-vnc.tls=true
       - traefik.http.routers.rooms-booking-vnc.tls.certresolver=le
       - traefik.http.routers.rooms-booking-vnc.priority=150
-      - traefik.http.routers.rooms-booking-vnc.middlewares=rooms-booking-vnc-auth,rooms-booking-vnc-stripprefix
+      - traefik.http.routers.rooms-booking-vnc.middlewares=rooms-booking-vnc-stripprefix,rooms-booking-vnc-headers
+      - traefik.http.routers.rooms-booking-vnc-ws.rule=Host(`rooms.uzorita.hr`) && PathPrefix(`/booking-vnc/websockify`)
+      - traefik.http.routers.rooms-booking-vnc-ws.entrypoints=websecure
+      - traefik.http.routers.rooms-booking-vnc-ws.tls=true
+      - traefik.http.routers.rooms-booking-vnc-ws.tls.certresolver=le
+      - traefik.http.routers.rooms-booking-vnc-ws.priority=160
+      - traefik.http.routers.rooms-booking-vnc-ws.middlewares=rooms-booking-vnc-auth,rooms-booking-vnc-stripprefix,rooms-booking-vnc-headers
+      - traefik.http.routers.rooms-booking-vnc-ws.service=rooms-booking-vnc
       - traefik.http.middlewares.rooms-booking-vnc-auth.forwardauth.address=http://uzorita-django:8000/api/reception/booking-extranet/vnc/auth/
       - traefik.http.middlewares.rooms-booking-vnc-auth.forwardauth.trustForwardHeader=true
+      - traefik.http.middlewares.rooms-booking-vnc-headers.headers.customResponseHeaders.X-Frame-Options=SAMEORIGIN
       - traefik.http.middlewares.rooms-booking-vnc-stripprefix.stripprefix.prefixes=/booking-vnc
       - traefik.http.services.rooms-booking-vnc.loadbalancer.server.port=6080
+    restart: unless-stopped
+
+  celery-booking-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.booking-browser
+    image: uzorita-celery-booking-browser:local
+    container_name: uzorita-celery-booking-browser
+    working_dir: /app
+    network_mode: service:tailscale-booking-browser
+    depends_on:
+      tailscale-booking-browser:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      <<: *uzorita-backend-env
+      DISPLAY: ":99"
+      BOOKING_EXTRANET_VNC_DISPLAY: ":99"
+      TAILSCALE_EXIT_NODE: ${TAILSCALE_EXIT_NODE:-}
+    volumes:
+      - ./app:/app
+      - booking_browser_data:/data/booking_browser
     restart: unless-stopped
 
   paddle-ocr-fastapi:
@@ -143,6 +197,7 @@ services:
 
 volumes:
   booking_browser_data:
+  tailscale_booking_state:
 
 networks:
   hetzner_net:

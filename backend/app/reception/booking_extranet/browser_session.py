@@ -11,6 +11,7 @@ from django.conf import settings
 from playwright.sync_api import Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from .errors import BookingExtranetConnectError
 from .session_store import (
     DEFAULT_STORAGE_FILENAME,
     load_storage_state,
@@ -28,6 +29,22 @@ _page: Page | None = None
 
 def _display_env() -> str:
     return (settings.BOOKING_EXTRANET_VNC_DISPLAY or ":99").strip() or ":99"
+
+
+def _ensure_x_display() -> None:
+    """Fail fast when Xvfb is down (stale socket or wrong Celery worker)."""
+    display = _display_env()
+    os.environ["DISPLAY"] = display
+    if not display.startswith(":"):
+        return
+    socket_path = f"/tmp/.X11-unix/X{display[1:]}"
+    if os.path.exists(socket_path):
+        return
+    raise BookingExtranetConnectError(
+        f"Xvfb nije aktivan ({display}, nema {socket_path}). "
+        "Playwright headed radi samo u kontejneru uzorita-celery-booking-browser — "
+        "provjerite da celery-worker ne sluša booking_browser red i restartajte booking-browser."
+    )
 
 
 def detect_needs_human(page: Page) -> bool:
@@ -98,7 +115,7 @@ def open_headed_context(
         if _context is not None:
             return _context
 
-        os.environ["DISPLAY"] = _display_env()
+        _ensure_x_display()
         state = load_storage_state(relative_path=storage_relative_path)
         _playwright = sync_playwright().start()
         _browser = _playwright.chromium.launch(headless=False)

@@ -81,6 +81,22 @@ def revoke_vnc_token(token: str) -> None:
         _redis_client().delete(f"{VNC_REDIS_PREFIX}{token}")
 
 
+def refresh_vnc_token_ttl(token: str) -> bool:
+    """Extend token TTL without rotating the secret (keeps an open noVNC WebSocket valid)."""
+    payload = get_vnc_token_payload(token)
+    if not payload:
+        return False
+    ttl = _ttl_seconds()
+    client = _redis_client()
+    client.setex(f"{VNC_REDIS_PREFIX}{token}", ttl, json.dumps(payload))
+    client.setex(
+        VNC_ACTIVE_KEY,
+        ttl,
+        json.dumps({"token": token, **payload}),
+    )
+    return True
+
+
 def validate_vnc_token(token: str, *, user_id: int | None = None) -> bool:
     payload = get_vnc_token_payload(token)
     if not payload:
@@ -92,11 +108,35 @@ def validate_vnc_token(token: str, *, user_id: int | None = None) -> bool:
 
 def build_vnc_url(token: str) -> str:
     public_path = (settings.BOOKING_EXTRANET_VNC_PUBLIC_PATH or "/booking-vnc").rstrip("/")
+    # vnc_lite gradi wss://host/{path} — path mora uključivati booking-vnc prefiks (ne samo websockify).
+    ws_path = f"{public_path.lstrip('/')}/websockify?token={token}"
     query = urlencode(
         {
+            "token": token,
             "autoconnect": "true",
-            "resize": "scale",
-            "path": f"websockify?token={token}",
+            "scale": "true",
+            "path": ws_path,
         }
     )
-    return f"{public_path}/vnc.html?{query}"
+    return f"{public_path}/vnc_lite.html?{query}"
+
+
+def extract_vnc_token_from_request(request) -> str:
+    """Token from query, Traefik X-Forwarded-Uri, or X-Booking-Vnc-Token."""
+    token = (request.GET.get("token") or "").strip()
+    if token:
+        return token
+
+    header_token = (request.headers.get("X-Booking-Vnc-Token") or "").strip()
+    if header_token:
+        return header_token
+
+    forwarded_uri = (request.headers.get("X-Forwarded-Uri") or "").strip()
+    if "?" in forwarded_uri:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(forwarded_uri)
+        values = parse_qs(parsed.query).get("token") or []
+        if values:
+            return values[0].strip()
+    return ""

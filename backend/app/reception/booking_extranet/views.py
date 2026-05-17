@@ -10,11 +10,14 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.http import HttpResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework.views import APIView
 
 from reception.booking_extranet.connection_service import (
     can_start_auto_connect,
     can_start_vnc_connect,
+    can_verify_2fa,
     connect_mode,
     disconnect_session,
     import_storage_state,
@@ -113,6 +116,7 @@ def _task_poll_payload(task_id: str) -> dict:
     return payload
 
 
+@method_decorator(xframe_options_exempt, name="dispatch")
 class BookingExtranetVncAuthView(APIView):
     """Traefik ForwardAuth: 2xx allows WebSocket/noVNC, 401 denies."""
 
@@ -120,39 +124,34 @@ class BookingExtranetVncAuthView(APIView):
     permission_classes = []
 
     def get(self, request):
-        from reception.booking_extranet.vnc import validate_vnc_token
+        from reception.booking_extranet.vnc import extract_vnc_token_from_request, validate_vnc_token
 
         if not settings.BOOKING_EXTRANET_VNC_ENABLED:
             return HttpResponse(status=503)
-        if not request.user.is_authenticated:
-            return HttpResponse(status=401)
 
-        token = (
-            request.GET.get("token")
-            or request.headers.get("X-Booking-Vnc-Token")
-            or ""
-        ).strip()
+        token = extract_vnc_token_from_request(request)
         if not token:
             return HttpResponse(status=401)
-        if not validate_vnc_token(token, user_id=request.user.id):
-            return HttpResponse(status=401)
-        return HttpResponse(status=200)
+
+        if validate_vnc_token(token):
+            return HttpResponse(status=200)
+
+        if request.user.is_authenticated and validate_vnc_token(
+            token, user_id=request.user.id
+        ):
+            return HttpResponse(status=200)
+
+        return HttpResponse(status=401)
 
 
-class BookingExtranetVncContinueView(APIView):
+class BookingExtranetVncPrepareView(APIView):
+    """Issue a fresh VNC token (iframe) without starting full connect."""
+
     permission_classes = [IsAuthenticated]
 
     @extend_schema(tags=["Reception"])
     def post(self, request):
-        from reception.booking_extranet.browser_session import (
-            detect_needs_human,
-            get_page,
-            save_context_state,
-            wait_until_not_human,
-        )
-        from reception.booking_extranet.urls import is_connected_url
-        from reception.booking_extranet.vnc import clear_active_vnc
-        from reception.models import BookingExtranetJob, BookingExtranetJobStatus, BookingExtranetStatus
+        from reception.booking_extranet.vnc import issue_vnc_token
 
         if not settings.BOOKING_EXTRANET_VNC_ENABLED:
             return Response(
@@ -160,50 +159,40 @@ class BookingExtranetVncContinueView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        conn = BookingExtranetConnection.get_solo()
-        relative_path = conn.storage_path or "state.enc"
-        try:
-            page = get_page()
-        except Exception:
+        issue_vnc_token(user_id=request.user.id)
+        return Response(_connection_payload())
+
+
+class BookingExtranetVncContinueView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["Reception"])
+    def post(self, request):
+        from celery.exceptions import TimeoutError as CeleryTimeoutError
+        from reception.booking_extranet.tasks import booking_extranet_vnc_continue_task
+
+        if not settings.BOOKING_EXTRANET_VNC_ENABLED:
             return Response(
-                {"detail": "Headed browser nije aktivan na workeru."},
+                {"detail": "VNC nije omogućen."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        async_result = booking_extranet_vnc_continue_task.delay(user_id=request.user.id)
+        try:
+            payload = async_result.get(timeout=60)
+        except CeleryTimeoutError:
+            return Response(
+                {"detail": "Provjera na workeru traje predugo — osvježite status za nekoliko sekundi."},
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+
+        if payload.get("error"):
+            return Response(
+                {"detail": payload["error"], "connection": payload.get("connection")},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        resolved = wait_until_not_human(
-            page,
-            timeout_s=30,
-            is_resolved=lambda p: is_connected_url(p.url or "") or not detect_needs_human(p),
-        )
 
-        if conn.status == BookingExtranetStatus.NEEDS_HUMAN and resolved:
-            if is_connected_url(page.url or ""):
-                save_context_state(relative_path=relative_path)
-                clear_active_vnc()
-                from reception.booking_extranet.connection_service import apply_connect_result
-                from reception.booking_extranet.outcomes import ConnectOutcome, ConnectResult
-
-                apply_connect_result(
-                    ConnectResult(
-                        outcome=ConnectOutcome.CONNECTED,
-                        storage_relative_path=relative_path,
-                    ),
-                    user=request.user,
-                )
-
-        active_job = (
-            BookingExtranetJob.objects.filter(status=BookingExtranetJobStatus.NEEDS_HUMAN)
-            .order_by("-created_at")
-            .first()
-        )
-        if active_job:
-            from reception.booking_extranet.tasks import booking_extranet_fetch_reservation_task
-
-            booking_extranet_fetch_reservation_task.delay(
-                job_id=active_job.id,
-                user_id=request.user.id,
-            )
-
-        return Response(_connection_payload())
+        return Response(payload.get("connection", _connection_payload()))
 
 
 class BookingExtranetConnectionView(APIView):
@@ -262,9 +251,10 @@ class BookingExtranetVerify2faView(APIView):
             )
 
         conn = BookingExtranetConnection.get_solo()
-        if conn.status != BookingExtranetStatus.NEEDS_2FA:
+        verify_ok, verify_reason = can_verify_2fa(conn)
+        if not verify_ok:
             return Response(
-                {"detail": "Veza nije u stanju needs_2fa."},
+                {"detail": verify_reason, "connection": serialize_connection(conn)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

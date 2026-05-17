@@ -1,39 +1,24 @@
 # Booking.com extranet — session i login
 
 **Last updated:** 2026-05-17  
-**Status:** Faza A + **Faza B (noVNC)** — CAPTCHA u iframeu na recepciji
+**Status:** noVNC + Tailscale exit node
 
 ## CAPTCHA i SMS
 
 Booking nakon više automatskih pokušaja traži **SMS** i **CAPTCHA** (uključujući AWS WAF „Human Verification”). Headless Playwright to ne rješava pouzdano.
 
-**Primarni put (Faza B):** kad je `BOOKING_EXTRANET_VNC_ENABLED=true` i `BOOKING_EXTRANET_HEADED=true`, worker `celery-booking-browser` pokreće headed Chromium na `DISPLAY=:99`. Recepcija na **Postavke → Booking** vidi **noVNC iframe**, riješi CAPTCHA, klikne **Nastavi**; isti browser context nastavlja connect / health / dohvat rezervacije.
+**Primarni put:** worker `celery-booking-browser` (headed Chromium na `DISPLAY=:99`) + **Tailscale exit node** na laptopu (`TAILSCALE_EXIT_NODE`). Recepcija na **Postavke → Booking** vidi **noVNC iframe**, riješi CAPTCHA, klikne **Nastavi**; isti browser context nastavlja connect / health / dohvat rezervacije.
 
-**Rezervni put:** RustDesk na bridge laptop → ručna prijava → uvezite `storage_state` (JSON upload u UI ili `import-state` API).
+**Rezervni put:** prijava na laptopu u browseru → export Playwright `storage_state.json` → **Spremi sesiju** u UI (ili `import-state` API).
 
-Automatski connect (`BOOKING_EXTRANET_CONNECT_MODE=automatic`) i dalje radi max **1×/24h** na workeru; CAPTCHA → `needs_human` + VNC token (TTL iz `BOOKING_EXTRANET_VNC_TOKEN_TTL_SECONDS`).
+Automatski connect (`BOOKING_EXTRANET_CONNECT_MODE=automatic`) radi max **1×/24h**; CAPTCHA → `needs_human` + VNC token. U `human_assisted` načinu VNC prijava s servera radi kad je postavljen `TAILSCALE_EXIT_NODE`.
 
-## RustDesk (već na serveru)
+## Ručni uvoz sesije
 
-Stack: `/opt/stacks/rustdesk` — `rustdesk-hbbs`, `rustdesk-hbbr`, Tailnet `rustdesk-tail`.  
-Nije remote desktop sam po sebi. **Bridge:** admin laptop (RustDesk klijent na `rustdesk-tail`) — ručna prijava kad sesija istekne.
-
-### Operativni koraci (human-assisted)
-
-1. Recepcija → [/settings/booking](https://rooms.uzorita.hr/settings/booking) ili banner na `/import`
-2. RustDesk → admin laptop
-3. Na laptopu: Booking login URL iz `BOOKING_EXTRANET_LOGIN_URL` (`.env`)
-4. Ručno: CAPTCHA + SMS u Chrome/Edge
-5. Export Playwright `storage_state.json` s bridgea (headed browser) ili DevTools — vidi dolje
-6. U recepciji: **Spremi sesiju** (upload JSON) ili na serveru:
-
-```bash
-python manage.py upload_booking_storage_state /path/to/storage_state.json
-```
-
-7. **Provjeri sesiju** u UI (headless health check, bez novog logina)
-
-### Export state na bridge PC (jednokratno)
+1. Na laptopu: prijava na Booking extranet (login URL iz `BOOKING_EXTRANET_LOGIN_URL`).
+2. Export `storage_state.json` (Playwright ili DevTools).
+3. U recepciji: **Postavke → Booking** → **Zalijepi JSON** / **Učitaj datoteku**.
+4. **Provjeri sesiju**.
 
 ```bash
 python -c "
@@ -48,22 +33,24 @@ with sync_playwright() as p:
 "
 ```
 
+Na serveru: `python manage.py upload_booking_storage_state /path/to/storage_state.json`
+
 ## Svrha
 
 Održavati **valjanu prijavu** na Booking.com extranet (`admin.booking.com`) iz recepcijskog UI-a, spremiti sesiju (cookies + localStorage) na serveru i obavijestiti kad istekne.
 
-**Faza A ne zamjenjuje:** XLS import, email ingest, iCal.
+**Ne zamjenjuje:** XLS import, email ingest, iCal.
 
 ## Statusi veze
 
 | Status | Značenje | Akcija u UI |
 |--------|----------|-------------|
-| `disconnected` | Nema spremljene sesije | RustDesk + uvezi sesiju |
+| `disconnected` | Nema spremljene sesije | VNC prijava ili uvezi sesiju |
 | `connecting` | Playwright radi login | Pričekaj / poll |
-| `needs_2fa` | Treba SMS kod | Unesi kod ili RustDesk |
-| `needs_human` | CAPTCHA / WAF | noVNC iframe + **Nastavi**, ili RustDesk → uvezi sesiju |
+| `needs_2fa` | Treba SMS kod | Unesi kod ili uvezi sesiju s laptopa |
+| `needs_human` | CAPTCHA / WAF | noVNC + **Nastavi** |
 | `connected` | Sesija valjana | — |
-| `expired` | Health check našao login | Ponovno uvezi sesiju |
+| `expired` | Health check našao login | VNC ili uvezi sesiju |
 | `error` | Neočekivana greška | Pogledaj poruku |
 
 ## Konfiguracija
@@ -84,56 +71,43 @@ BOOKING_EXTRANET_VNC_ENABLED=true
 BOOKING_EXTRANET_VNC_PUBLIC_PATH=/booking-vnc
 BOOKING_EXTRANET_VNC_TOKEN_TTL_SECONDS=1200
 BOOKING_EXTRANET_HEADED=true
+TS_LOGIN_SERVER=https://hs-control.qubitsecured.online
+TS_HOSTNAME_BOOKING_BROWSER=tailscale-booking-browser
+TS_AUTHKEY_BOOKING_BROWSER=<hskey-auth-...>
+TAILSCALE_EXIT_NODE=100.64.0.8
+BOOKING_EXTRANET_TAILSCALE_EXIT_NODE=100.64.0.8
 ```
 
 `op_token` u LOGIN_URL može isteći — generiraj novi iz extraneta (Manage → Reservations).
 
-Traefik: `PathPrefix(/booking-vnc)` → websockify:6080 na `celery-booking-browser`, **ForwardAuth** → `GET /api/reception/booking-extranet/vnc/auth/?token=...` (Django session + Redis token).
+### Tailscale exit node
+
+1. Na **laptopu:** oglašavanje exit nodea u Headscaleu.
+2. Auth key za `tailscale-booking-browser` u `.env`.
+3. Odobri rute `0.0.0.0/0,::/0` za exit node uređaj:
+   ```bash
+   docker exec headscale headscale nodes list-routes --identifier <node-id>
+   docker exec headscale headscale nodes approve-routes -i <node-id> -r "0.0.0.0/0,::/0"
+   ```
+4. Provjera: `docker exec uzorita-celery-booking-browser curl -4 -s https://ifconfig.me` → IP laptop ISP-a.
+5. Laptop **online** dok worker radi.
+
+Traefik: `PathPrefix(/booking-vnc)` → websockify na `tailscale-booking-browser`, ForwardAuth → Django.
 
 ## API
 
 | Endpoint | Opis |
 |----------|------|
-| `GET /api/reception/booking-extranet/connection/` | Status za UI (`vnc_url`, `vnc_active`, `active_job_id`) |
-| `POST /api/reception/booking-extranet/connection/start/` | Auto connect (samo `CONNECT_MODE=automatic`, rate limit) |
-| `GET /api/reception/booking-extranet/connection/start/<task_id>/` | Poll |
-| `POST /api/reception/booking-extranet/connection/verify-2fa/` | `{ "code": "..." }` |
-| `POST /api/reception/booking-extranet/connection/import-state/` | Upload `storage_state` JSON ili file |
-| `POST /api/reception/booking-extranet/connection/disconnect/` | Obriši sesiju |
-| `POST /api/reception/booking-extranet/connection/check/` | Ručni health check |
-| `GET /api/reception/booking-extranet/connection/check/<task_id>/` | Poll health check |
-| `GET /api/reception/booking-extranet/vnc/auth/` | Traefik ForwardAuth (session + `token` query) |
-| `POST /api/reception/booking-extranet/vnc/continue/` | Operator signal nakon CAPTCHA |
-| `POST /api/reception/booking-extranet/fetch-reservation/` | `{ inbound_email_id }` ili `{ booking_number }` |
-| `GET /api/reception/booking-extranet/fetch-reservation/<task_id>/` | Poll dohvata |
-
-Auth: `IsAuthenticated` + CSRF za POST.
-
-## Frontend
-
-- Stranica: `/settings/booking`
-- Banner na `/import` kad je extranet omogućen
+| `GET /api/reception/booking-extranet/connection/` | Status za UI |
+| `POST /api/reception/booking-extranet/connection/start/` | Pokreni prijavu (VNC) |
+| `POST /api/reception/booking-extranet/connection/import-state/` | Upload `storage_state` |
+| `POST /api/reception/booking-extranet/vnc/continue/` | Nakon CAPTCHA |
+| `POST /api/reception/booking-extranet/connection/check/` | Health check |
 
 ## Docker
 
-Servis `celery-booking-browser`:
-
-- Image: `mcr.microsoft.com/playwright/python`
-- Queue: `booking_browser`, concurrency **1**
-- Volume: `booking_browser_data` → `/data/booking_browser` (djeljen s `django` za import API)
-
-Beat: health check svakih **6h** (`check_booking_extranet_session_task`).
-
-## Email stub → extranet fetch
-
-Nakon ingest emaila koji kreira **stub** rezervaciju (`details_pending=true`), ako je extranet `connected`, enqueue se `fetch_reservation` (Celery, ne blokira ingest). WAF → `needs_human` + VNC; recepcija riješi u iframeu.
-
-## Sigurnost
-
-- Enkriptirani `storage_state` (Fernet); `OptanonConsent` se filtrira pri save/load
-- API ne vraća cookie vrijednosti ni lozinku
-- Redis lock `booking_extranet:connect` — jedan Playwright connect istovremeno
-- VNC token u Redis (`booking_vnc:{token}`), ForwardAuth + Django session
+- `tailscale-booking-browser` + `celery-booking-browser` (`network_mode: service:...`)
+- Queue `booking_browser`, volume `booking_browser_data`
 
 ## Povezano
 

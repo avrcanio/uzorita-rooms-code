@@ -113,6 +113,14 @@ def _wait_for_post_signin(page: Page) -> ConnectOutcome:
             )
         return None
 
+    early = _resolved()
+    if early == ConnectOutcome.CONNECTED.value:
+        return ConnectOutcome.CONNECTED
+    if early == ConnectOutcome.NEEDS_2FA.value:
+        return ConnectOutcome.NEEDS_2FA
+    if early == ConnectOutcome.NEEDS_HUMAN.value:
+        return ConnectOutcome.NEEDS_HUMAN
+
     try:
         if success_fragment:
             page.wait_for_url(f"**{success_fragment}**", timeout=_NAVIGATION_TIMEOUT_MS)

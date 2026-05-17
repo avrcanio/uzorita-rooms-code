@@ -9,6 +9,11 @@ def success_url_pattern() -> str:
 
 def is_connected_url(url: str) -> bool:
     lowered = (url or "").lower()
+    if is_login_redirect_url(url):
+        return False
+    # Nakon prijave Booking često otvara home.html, ne search_reservations.html.
+    if "admin.booking.com/hotel/hoteladmin" in lowered:
+        return True
     needle = success_url_pattern().lower()
     return "admin.booking.com" in lowered and (not needle or needle in lowered)
 

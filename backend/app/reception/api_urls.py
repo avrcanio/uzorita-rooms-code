@@ -15,6 +15,7 @@ from .booking_extranet.views import (
     BookingExtranetFetchReservationView,
     BookingExtranetVncAuthView,
     BookingExtranetVncContinueView,
+    BookingExtranetVncPrepareView,
 )
 from .booking_xls_views import BookingXlsImportView
 from .statistics_views import ReceptionMonthlyStatisticsView
@@ -82,6 +83,11 @@ urlpatterns = [
         "booking-extranet/vnc/auth/",
         BookingExtranetVncAuthView.as_view(),
         name="api-booking-extranet-vnc-auth",
+    ),
+    path(
+        "booking-extranet/vnc/prepare/",
+        BookingExtranetVncPrepareView.as_view(),
+        name="api-booking-extranet-vnc-prepare",
     ),
     path(
         "booking-extranet/vnc/continue/",
