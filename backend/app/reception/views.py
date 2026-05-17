@@ -16,7 +16,10 @@ from rest_framework.views import APIView
 from reception.ical.placeholders import exclude_ical_placeholder_reservations
 
 from .models import DocumentScanLog, DocumentScanStatus, Guest, IDDocument, Reservation, ReservationUnit
+from rest_framework.exceptions import NotFound
+
 from .serializers import (
+    GuestCreateSerializer,
     GuestDetailSerializer,
     ReservationTimelineSerializer,
     ReservationUpdateSerializer,
@@ -125,6 +128,26 @@ class ReservationDetailView(generics.RetrieveUpdateAPIView):
         detail = self.get_queryset().get(pk=instance.pk)
         output = ReservationTimelineSerializer(detail, context=self.get_serializer_context())
         return Response(output.data)
+
+
+class ReservationGuestListCreateView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = GuestCreateSerializer
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        reservation = Reservation.objects.filter(pk=self.kwargs["reservation_id"]).first()
+        if reservation is None:
+            raise NotFound("Rezervacija nije pronadena.")
+        context["reservation"] = reservation
+        return context
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        guest = serializer.save()
+        output = GuestDetailSerializer(guest, context=self.get_serializer_context())
+        return Response(output.data, status=201)
 
 
 class ReservationGuestDetailView(generics.RetrieveUpdateAPIView):

@@ -177,36 +177,37 @@ class ReservationUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
+_GUEST_WRITABLE_FIELDS = (
+    "first_name",
+    "last_name",
+    "email",
+    "date_of_birth",
+    "document_number",
+    "nationality",
+    "sex",
+    "address",
+    "date_of_issue",
+    "date_of_expiry",
+    "issuing_authority",
+    "personal_id_number",
+    "document_additional_number",
+    "additional_personal_id_number",
+    "document_code",
+    "document_type",
+    "document_country",
+    "document_country_iso2",
+    "document_country_iso3",
+    "document_country_numeric",
+    "mrz_raw_text",
+    "mrz_verified",
+    "is_primary",
+)
+
+
 class GuestDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Guest
-        fields = (
-            "id",
-            "reservation",
-            "first_name",
-            "last_name",
-            "email",
-            "date_of_birth",
-            "document_number",
-            "nationality",
-            "sex",
-            "address",
-            "date_of_issue",
-            "date_of_expiry",
-            "issuing_authority",
-            "personal_id_number",
-            "document_additional_number",
-            "additional_personal_id_number",
-            "document_code",
-            "document_type",
-            "document_country",
-            "document_country_iso2",
-            "document_country_iso3",
-            "document_country_numeric",
-            "mrz_raw_text",
-            "mrz_verified",
-            "is_primary",
-        )
+        fields = ("id", "reservation", *_GUEST_WRITABLE_FIELDS)
         read_only_fields = ("id", "reservation")
 
     def update(self, instance, validated_data):
@@ -217,6 +218,22 @@ class GuestDetailSerializer(serializers.ModelSerializer):
                 .update(is_primary=False)
             )
         return super().update(instance, validated_data)
+
+
+class GuestCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Guest
+        fields = _GUEST_WRITABLE_FIELDS
+
+    def create(self, validated_data):
+        reservation = self.context["reservation"]
+        if "is_primary" not in validated_data:
+            validated_data["is_primary"] = not Guest.objects.filter(
+                reservation=reservation
+            ).exists()
+        if validated_data.get("is_primary", False):
+            Guest.objects.filter(reservation=reservation).update(is_primary=False)
+        return Guest.objects.create(reservation=reservation, **validated_data)
 
 
 # Legacy OcrScanLogSerializer removed (old web scanning flow).

@@ -1687,6 +1687,57 @@ class DocumentScanIngestViewTests(TestCase):
         self.assertTrue(self.guest.mrz_verified)
 
 
+class ReservationGuestCreateApiTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("guest_create_api", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+        self.reservation = Reservation.objects.create(
+            external_id="guest-create-1",
+            check_in_date=date(2026, 5, 17),
+            check_out_date=date(2026, 5, 18),
+            status=ReservationStatus.EXPECTED,
+        )
+
+    def _url(self, reservation_id: int | None = None) -> str:
+        rid = reservation_id if reservation_id is not None else self.reservation.id
+        return f"/api/reception/reservations/{rid}/guests/"
+
+    def test_create_first_guest_is_primary(self):
+        response = self.client.post(
+            self._url(),
+            {"first_name": "Ana", "last_name": "Test"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["is_primary"])
+        guest = Guest.objects.get(pk=response.data["id"])
+        self.assertEqual(guest.first_name, "Ana")
+
+    def test_create_second_guest_not_primary(self):
+        Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Prvi",
+            last_name="Gost",
+            is_primary=True,
+        )
+        response = self.client.post(
+            self._url(),
+            {"first_name": "Drugi", "last_name": "Gost"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.data["is_primary"])
+
+    def test_create_unknown_reservation_404(self):
+        response = self.client.post(
+            self._url(reservation_id=999999),
+            {"first_name": "X", "last_name": "Y"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 404)
+
+
 class RoomCalendarViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("room_calendar_api", password="test-pass-123")
