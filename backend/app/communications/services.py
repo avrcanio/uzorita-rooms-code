@@ -7,6 +7,7 @@ from django.utils.dateparse import parse_date
 from django.db import transaction
 
 from communications.booking_parser import BookingParseException, parse_booking_email
+from communications.guest_messaging import link_inbound_to_conversation
 from communications.models import InboundEmail, ParseError, ParseStatus
 from reception.booking_import import (
     status_from_booking_kind,
@@ -147,12 +148,17 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
         if payload.kind == "message":
             inbound.parse_status = ParseStatus.PARSED
             inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
-            return {
+            guest_message = link_inbound_to_conversation(inbound)
+            result: dict[str, Any] = {
                 "status": "parsed",
                 "external_id": payload.booking_number,
                 "skipped_upsert": True,
                 "reason": "message_kind",
             }
+            if guest_message:
+                result["guest_message_id"] = guest_message.id
+                result["linked_conversation"] = True
+            return result
 
         status = status_from_booking_kind(payload.kind)
 

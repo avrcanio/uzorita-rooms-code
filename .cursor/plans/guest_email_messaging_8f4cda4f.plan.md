@@ -13,10 +13,10 @@ todos:
     status: completed
   - id: f1-flutter
     content: "Faza 1: reception_api, controller, ReservationMessagesSection na detail ekranu"
-    status: pending
+    status: completed
   - id: f2-link
     content: "Faza 2: link_inbound_to_conversation + process_inbound_guest_messages u pipeline"
-    status: pending
+    status: completed
   - id: f2-booking-message
     content: "Faza 2: services.py kind=message → thread; InboundEmail.reservation FK"
     status: pending

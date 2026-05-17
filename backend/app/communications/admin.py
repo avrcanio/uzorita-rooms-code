@@ -32,8 +32,10 @@ class InboundEmailAdmin(admin.ModelAdmin):
         "sender",
         "subject",
         "parse_status",
+        "reservation",
         "message_id",
     )
+    raw_id_fields = ("reservation",)
     list_filter = ("parse_status", "source", "received_at")
     search_fields = ("message_id", "sender", "subject")
     readonly_fields = ("created_at", "updated_at")

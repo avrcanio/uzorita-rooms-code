@@ -25,6 +25,9 @@ def run_booking_email_pipeline_task(self, *, fetch_limit: int = 50, process_limi
     logger.info("booking-email-pipeline: process_booking_emails (limit=%s)", process_limit)
     call_command("process_booking_emails", limit=process_limit, only_pending=True)
 
+    logger.info("booking-email-pipeline: process_inbound_guest_messages (limit=%s)", process_limit)
+    call_command("process_inbound_guest_messages", limit=process_limit)
+
     return {"status": "ok", "fetch_limit": fetch_limit, "process_limit": process_limit}
 
 

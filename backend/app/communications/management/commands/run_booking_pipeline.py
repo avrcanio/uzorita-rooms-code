@@ -69,6 +69,12 @@ class Command(BaseCommand):
             except Exception as e:
                 self.stderr.write(f"booking-pipeline: process failed: {e}")
 
+            try:
+                self.stdout.write("booking-pipeline: process_inbound_guest_messages ...")
+                call_command("process_inbound_guest_messages", limit=process_limit)
+            except Exception as e:
+                self.stderr.write(f"booking-pipeline: guest messages failed: {e}")
+
             if not skip_ical:
                 now = time.time()
                 if now - last_ical_sync >= ical_interval:

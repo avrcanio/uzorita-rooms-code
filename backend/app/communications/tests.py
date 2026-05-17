@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone as dt_timezone
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -11,9 +11,18 @@ from communications.booking_parser import _is_blocked_guest_email, _parse_guest_
 from communications.guest_messaging import (
     deliver_outbound_guest_email,
     guest_message_subject,
+    link_inbound_to_conversation,
+    process_inbound_guest_messages,
     send_guest_message,
 )
-from communications.models import GuestMessage, InboundEmail, OutboundEmail, OutboundEmailStatus, ParseStatus
+from communications.models import (
+    GuestConversation,
+    GuestMessage,
+    InboundEmail,
+    OutboundEmail,
+    OutboundEmailStatus,
+    ParseStatus,
+)
 from communications.services import process_booking_inbound_email
 from reception.booking_import import _should_update_guest_email
 from reception.models import Guest, Reservation, ReservationStatus
@@ -336,3 +345,186 @@ class ReservationGuestMessageApiTests(TestCase):
         self.assertEqual(len(get_response.data), 1)
         self.assertEqual(get_response.data[0]["id"], post_response.data["id"])
         self.assertEqual(get_response.data[0]["body_text"], "Dobro jutro")
+
+
+class InboundGuestMessageLinkTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="reception-inbound",
+            password="test-pass-123",
+        )
+        self.reservation = Reservation.objects.create(
+            external_id="5581435138",
+            check_in_date="2027-06-01",
+            check_out_date="2027-06-05",
+            status=ReservationStatus.EXPECTED,
+        )
+        self.guest = Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Guest",
+            email="ana.relay@guest.booking.com",
+            is_primary=True,
+        )
+
+    def _inbound(
+        self,
+        *,
+        message_id: str,
+        subject: str = "",
+        sender: str = "",
+        body_text: str = "",
+        raw_headers: str = "",
+        parsed_payload: dict | None = None,
+    ) -> InboundEmail:
+        return InboundEmail.objects.create(
+            message_id=message_id,
+            mailbox="room_reservations@uzorita.hr",
+            subject=subject,
+            sender=sender,
+            body_text=body_text,
+            raw_headers=raw_headers,
+            parsed_payload=parsed_payload or {},
+            parse_status=ParseStatus.PARSED,
+            received_at=datetime(2027, 6, 2, 10, 0, tzinfo=dt_timezone.utc),
+        )
+
+    def test_link_by_in_reply_to_outbound_message_id(self):
+        conversation = GuestConversation.objects.create(reservation=self.reservation)
+        outbound = OutboundEmail.objects.create(
+            reservation=self.reservation,
+            guest=self.guest,
+            conversation=conversation,
+            to_email=self.guest.email,
+            subject=guest_message_subject(self.reservation),
+            body_text="Pozdrav iz recepcije",
+            smtp_message_id="<outbound-thread@uzorita.hr>",
+            sent_by=self.user,
+            status=OutboundEmailStatus.SENT,
+        )
+        inbound = self._inbound(
+            message_id="inbound-reply-1",
+            subject="Re: Booking 5581435138",
+            sender=f"Ana Guest <{self.guest.email}>",
+            body_text="Hvala, stižemo oko 15h.",
+            raw_headers=(
+                "In-Reply-To: <outbound-thread@uzorita.hr>\n"
+                "References: <outbound-thread@uzorita.hr>\n"
+            ),
+        )
+
+        message = link_inbound_to_conversation(inbound)
+
+        self.assertIsNotNone(message)
+        self.assertEqual(message.direction, "inbound")
+        self.assertEqual(message.body_text, "Hvala, stižemo oko 15h.")
+        inbound.refresh_from_db()
+        self.assertEqual(inbound.reservation_id, self.reservation.pk)
+        self.assertEqual(outbound.reservation_id, self.reservation.pk)
+
+    def test_link_by_booking_number_and_guest_relay_sender(self):
+        inbound = self._inbound(
+            message_id="inbound-booking-message-1",
+            subject="Message about booking (5581435138)",
+            sender=f"Ana Guest <{self.guest.email}>",
+            body_text="Možemo li raniji check-in?",
+            parsed_payload={"kind": "message", "booking_number": "5581435138"},
+        )
+
+        message = link_inbound_to_conversation(inbound)
+
+        self.assertIsNotNone(message)
+        self.assertTrue(GuestConversation.objects.filter(reservation=self.reservation).exists())
+        inbound.refresh_from_db()
+        self.assertEqual(inbound.reservation_id, self.reservation.pk)
+
+    def test_link_by_primary_guest_email_and_stay_dates(self):
+        inbound = self._inbound(
+            message_id="inbound-guest-email-fallback",
+            subject="Pitanje o boravku",
+            sender=f"Ana Guest <{self.guest.email}>",
+            body_text="Imamo li parking?",
+        )
+
+        message = link_inbound_to_conversation(inbound)
+
+        self.assertIsNotNone(message)
+        self.assertEqual(message.conversation.reservation_id, self.reservation.pk)
+
+    def test_does_not_link_booking_confirmation_without_guest_signals(self):
+        inbound = self._inbound(
+            message_id="inbound-new-booking-1",
+            subject="Booking.com - New booking! (5581435138, Sunday, 28 June 2026)",
+            sender="Booking.com <noreply@booking.com>",
+            body_text="Booking confirmation",
+            parsed_payload={"kind": "new", "booking_number": "5581435138"},
+        )
+
+        message = link_inbound_to_conversation(inbound)
+
+        self.assertIsNone(message)
+        self.assertEqual(GuestMessage.objects.count(), 0)
+
+    def test_process_inbound_guest_messages_batch(self):
+        linked = self._inbound(
+            message_id="inbound-batch-1",
+            subject="Re: Booking 5581435138",
+            sender=f"Ana Guest <{self.guest.email}>",
+            body_text="Vidimo se sutra.",
+            parsed_payload={"kind": "message", "booking_number": "5581435138"},
+        )
+        self._inbound(
+            message_id="inbound-batch-skip",
+            subject="Booking.com - New booking! (9999999999, Sunday, 28 June 2026)",
+            sender="Booking.com <noreply@booking.com>",
+            body_text="Booking confirmation",
+            parsed_payload={"kind": "new", "booking_number": "9999999999"},
+        )
+
+        result = process_inbound_guest_messages(limit=10)
+
+        self.assertEqual(result["processed"], 2)
+        self.assertEqual(result["linked"], 1)
+        self.assertEqual(result["skipped"], 1)
+        linked.refresh_from_db()
+        self.assertEqual(linked.reservation_id, self.reservation.pk)
+
+
+class BookingMessagePipelineTests(TestCase):
+    SUBJECT = "Reservation details for booking 5581435138"
+    BODY = """Reservation details
+5581435138
+Booking.com ID
+5581435138
+ana.relay@guest.booking.com
+Ana Guest
+"""
+
+    def test_message_kind_pipeline_links_conversation(self):
+        reservation = Reservation.objects.create(
+            external_id="5581435138",
+            check_in_date="2027-06-01",
+            check_out_date="2027-06-05",
+            status=ReservationStatus.EXPECTED,
+        )
+        Guest.objects.create(
+            reservation=reservation,
+            first_name="Ana",
+            last_name="Guest",
+            email="ana.relay@guest.booking.com",
+            is_primary=True,
+        )
+        inbound = InboundEmail.objects.create(
+            message_id="pipeline-message-5581435138",
+            mailbox="room_reservations@uzorita.hr",
+            subject=self.SUBJECT,
+            body_text=self.BODY,
+        )
+
+        result = process_booking_inbound_email(inbound_email_id=inbound.id)
+
+        self.assertEqual(result["status"], "parsed")
+        self.assertTrue(result.get("linked_conversation"))
+        self.assertEqual(GuestMessage.objects.count(), 1)
+        inbound.refresh_from_db()
+        self.assertEqual(inbound.reservation_id, reservation.pk)

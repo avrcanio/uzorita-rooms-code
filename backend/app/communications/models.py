@@ -13,6 +13,13 @@ class InboundEmail(models.Model):
     source = models.CharField(max_length=32, default="imap")
     message_id = models.CharField(max_length=500, unique=True)
     mailbox = models.EmailField()
+    reservation = models.ForeignKey(
+        "reception.Reservation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="inbound_emails",
+    )
     sender = models.CharField(max_length=500, blank=True)
     subject = models.CharField(max_length=998, blank=True)
     received_at = models.DateTimeField(null=True, blank=True)
