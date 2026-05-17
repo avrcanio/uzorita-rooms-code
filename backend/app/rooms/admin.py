@@ -132,7 +132,19 @@ class RoomTypePricingRuleAdmin(admin.ModelAdmin):
 
 @admin.register(PropertyInfo)
 class PropertyInfoAdmin(admin.ModelAdmin):
-    list_display = ("id", "code", "is_active", "updated_at")
+    list_display = ("id", "code", "evisitor_facility_code", "is_active", "updated_at")
     list_filter = ("is_active",)
-    search_fields = ("code",)
+    search_fields = ("code", "evisitor_facility_code")
     readonly_fields = ("created_at", "updated_at")
+    fields = (
+        "code",
+        "is_active",
+        "evisitor_facility_code",
+        "whatsapp_phone",
+        "google_maps_place_id",
+        "google_maps_url",
+        "google_maps_embed_url",
+        "google_analytics_measurement_id",
+        "created_at",
+        "updated_at",
+    )

@@ -3,6 +3,8 @@ from django.core.management.base import BaseCommand, CommandError
 
 from reception.evisitor.client import EvisitorClient
 from reception.evisitor.exceptions import EvisitorApiError, EvisitorConfigError
+from reception.evisitor.mapper import _resolve_facility_code
+from rooms.models import PropertyInfo
 
 
 class Command(BaseCommand):
@@ -14,6 +16,13 @@ class Command(BaseCommand):
 
         self.stdout.write(f"ENV={settings.EVISITOR_ENV}")
         self.stdout.write(f"BASE_URL={settings.EVISITOR_BASE_URL}")
+        facility = _resolve_facility_code()
+        self.stdout.write(f"FACILITY={facility or '(nije postavljeno)'}")
+        prop = PropertyInfo.objects.filter(is_active=True).first()
+        if prop:
+            self.stdout.write(
+                f"  PropertyInfo: code={prop.code} facility={prop.evisitor_facility_code or '-'}"
+            )
 
         client = EvisitorClient()
         try:
@@ -25,6 +34,13 @@ class Command(BaseCommand):
                 first = countries[0]
                 self.stdout.write(
                     f"  primjer: {first.get('CodeTwoLetters')} -> {first.get('CodeThreeLetters')}"
+                )
+            try:
+                doc_types = client.fetch_records("DocumentTypeLookup", psize=5)
+                self.stdout.write(f"DocumentTypeLookup: {len(doc_types)} zapisa")
+            except EvisitorApiError as exc:
+                self.stdout.write(
+                    self.style.WARNING(f"DocumentTypeLookup preskočen: {exc}")
                 )
         except (EvisitorConfigError, EvisitorApiError) as exc:
             raise CommandError(str(exc)) from exc

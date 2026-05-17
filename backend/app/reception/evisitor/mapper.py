@@ -57,10 +57,12 @@ def build_check_in_payload(
     if not guest.date_of_birth:
         errors["date_of_birth"] = "Datum rođenja je obavezan."
 
-    citizenship = iso2_to_iso3(guest.nationality) or iso2_to_iso3(
-        guest.document_country_iso2
+    citizenship = (
+        iso2_to_iso3(guest.nationality)
+        or iso2_to_iso3(guest.document_country_iso2)
+        or (guest.document_country_iso3 or "").strip().upper()[:3]
     )
-    if not citizenship:
+    if not citizenship or len(citizenship) != 3:
         errors["nationality"] = "Državljanstvo (ISO3) nije poznato."
 
     document_type = map_document_type_code(guest.document_type, guest.document_code)

@@ -1748,6 +1748,27 @@ class EvisitorSubmitViewTests(TestCase):
 
 class EvisitorMapperTests(TestCase):
     @override_settings(EVISITOR_FACILITY_CODE="0000022")
+    def test_build_check_in_payload_maps_belgian_citizenship(self):
+        reservation = Reservation.objects.create(
+            external_id="map-be-1",
+            check_in_date=date(2026, 6, 1),
+            check_out_date=date(2026, 6, 5),
+        )
+        guest = Guest.objects.create(
+            reservation=reservation,
+            first_name="Vincent",
+            last_name="Bourgois",
+            nationality="BE",
+            sex="M",
+            date_of_birth=date(1960, 8, 15),
+            document_number="595524357867",
+            document_type="osobna iskaznica",
+        )
+        payload = build_check_in_payload(guest)
+        self.assertEqual(payload["Citizenship"], "BEL")
+        self.assertEqual(payload["DocumentType"], "027")
+
+    @override_settings(EVISITOR_FACILITY_CODE="0000022")
     def test_build_check_in_payload_maps_core_fields(self):
         reservation = Reservation.objects.create(
             external_id="map-1",
