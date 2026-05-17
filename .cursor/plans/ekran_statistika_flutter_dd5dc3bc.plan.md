@@ -4,13 +4,13 @@ overview: "Novi backend endpoint za mjesečne agregacije prihoda/noći/provizije
 todos:
   - id: backend-stats-api
     content: "Django: statistics.py agregacija + GET /api/reception/statistics/monthly/ + testovi"
-    status: pending
+    status: completed
   - id: flutter-stats-data
     content: "Flutter: domain model, reception_api metoda, statistics_controller (godina, mjesec, metrika)"
-    status: pending
+    status: completed
   - id: flutter-stats-ui
     content: "Flutter: statistics_screen + chart (stacked provizija) + YoY panel + swipe mjeseci"
-    status: pending
+    status: completed
   - id: manual-qa
     content: "Ručno testiranje na uređaju: default mjesec, swipe, Prihod vs Noći, prazni mjeseci"
     status: pending
