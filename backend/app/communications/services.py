@@ -55,6 +55,25 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
         payload_dict = payload.to_dict()
         inbound.parsed_payload = payload_dict
 
+        if payload.kind == "message":
+            inbound.parse_status = ParseStatus.PARSED
+            inbound.save(
+                update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"]
+            )
+            guest_message = None
+            if not dry_run:
+                guest_message = link_inbound_to_conversation(inbound)
+            result: dict[str, Any] = {
+                "status": "parsed",
+                "external_id": payload.booking_number,
+                "skipped_upsert": True,
+                "reason": "message_kind",
+            }
+            if guest_message:
+                result["guest_message_id"] = guest_message.id
+                result["linked_conversation"] = True
+            return result
+
         missing = []
         if not payload.check_in_date:
             missing.append("check_in_date")
@@ -144,21 +163,6 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
             )
             inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
             return {"status": "partial", "missing": missing}
-
-        if payload.kind == "message":
-            inbound.parse_status = ParseStatus.PARSED
-            inbound.save(update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"])
-            guest_message = link_inbound_to_conversation(inbound)
-            result: dict[str, Any] = {
-                "status": "parsed",
-                "external_id": payload.booking_number,
-                "skipped_upsert": True,
-                "reason": "message_kind",
-            }
-            if guest_message:
-                result["guest_message_id"] = guest_message.id
-                result["linked_conversation"] = True
-            return result
 
         status = status_from_booking_kind(payload.kind)
 

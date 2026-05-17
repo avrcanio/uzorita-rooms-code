@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: f2-booking-message
     content: "Faza 2: services.py kind=message → thread; InboundEmail.reservation FK"
-    status: pending
+    status: completed
   - id: f2-flutter-inbound
     content: "Faza 2: Flutter prikaz inbound poruka + refresh"
     status: pending

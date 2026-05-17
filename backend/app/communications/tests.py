@@ -524,7 +524,9 @@ Ana Guest
         result = process_booking_inbound_email(inbound_email_id=inbound.id)
 
         self.assertEqual(result["status"], "parsed")
+        self.assertEqual(result.get("reason"), "message_kind")
         self.assertTrue(result.get("linked_conversation"))
         self.assertEqual(GuestMessage.objects.count(), 1)
         inbound.refresh_from_db()
+        self.assertEqual(inbound.parse_status, ParseStatus.PARSED)
         self.assertEqual(inbound.reservation_id, reservation.pk)
