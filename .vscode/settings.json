@@ -3,8 +3,5 @@
   "git.autoRepositoryDetection": false,
   "git.openRepositoryInParentFolders": "never",
   "git.ignoreSubmodules": true,
-  "git.ignoredRepositories": [
-    "/opt/stacks/uzorita",
-    "/opt/stacks/uzorita/rooms"
-  ]
+  "git.ignoredRepositories": ["/opt/stacks/uzorita"]
 }
