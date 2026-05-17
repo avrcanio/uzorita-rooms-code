@@ -8,7 +8,11 @@ from django.db import transaction
 
 from communications.booking_parser import BookingParseException, parse_booking_email
 from communications.models import InboundEmail, ParseError, ParseStatus
-from reception.booking_import import status_from_booking_kind, upsert_reservation_from_booking_payload
+from reception.booking_import import (
+    status_from_booking_kind,
+    upsert_booking_email_stub,
+    upsert_reservation_from_booking_payload,
+)
 from reception.models import ImportSource, Reservation, ReservationStatus
 from rooms.services import canonical_room_info
 
@@ -59,6 +63,77 @@ def process_booking_inbound_email(*, inbound_email_id: int, dry_run: bool = Fals
             missing.append("room_name")
 
         if missing:
+            if payload.kind in {"new", "modify", "cancel"}:
+                existing = Reservation.objects.filter(external_id=payload.booking_number).first()
+                if (
+                    existing
+                    and not existing.details_pending
+                    and payload.kind != "cancel"
+                ):
+                    inbound.parse_status = ParseStatus.PARSED
+                    inbound.parse_note = "Rezervacija već ima puni XLS import."
+                    inbound.save(
+                        update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"]
+                    )
+                    return {
+                        "status": "parsed",
+                        "external_id": payload.booking_number,
+                        "skipped_upsert": True,
+                        "reason": "already_complete",
+                    }
+
+                if existing and not existing.details_pending and payload.kind == "cancel":
+                    if not dry_run:
+                        if existing.status not in (
+                            ReservationStatus.CHECKED_IN,
+                            ReservationStatus.CHECKED_OUT,
+                        ):
+                            existing.status = ReservationStatus.CANCELED
+                            existing.save(update_fields=["status", "updated_at"])
+                        _cancel_suffix_reservations(payload.booking_number)
+                    inbound.parse_status = ParseStatus.PARSED
+                    inbound.parse_note = "Otkaz primijenjen na postojeću rezervaciju (XLS import)."
+                    inbound.save(
+                        update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"]
+                    )
+                    return {
+                        "status": "parsed",
+                        "external_id": payload.booking_number,
+                        "reservation_ids": [existing.id],
+                        "canceled": True,
+                    }
+
+                if not dry_run:
+                    stub_status = (
+                        ReservationStatus.CANCELED
+                        if payload.kind == "cancel"
+                        else status_from_booking_kind(payload.kind)
+                    )
+                    stub_result = upsert_booking_email_stub(
+                        external_id=payload.booking_number,
+                        check_in_date=payload.check_in_date,
+                        check_out_date=payload.check_out_date,
+                        status=stub_status,
+                        booker_name=payload.guest_full_name,
+                    )
+                    if payload.kind == "cancel":
+                        _cancel_suffix_reservations(payload.booking_number)
+
+                    inbound.parse_status = ParseStatus.PARSED
+                    inbound.parse_note = (
+                        "Stub rezervacija (Booking broj); detalji će doći iz XLS/XML importa."
+                    )
+                    inbound.save(
+                        update_fields=["parsed_payload", "parse_status", "parse_note", "updated_at"]
+                    )
+                    return {
+                        "status": "parsed",
+                        "external_id": payload.booking_number,
+                        "reservation_ids": [stub_result.reservation_id],
+                        "stub": True,
+                        "missing": missing,
+                    }
+
             inbound.parse_status = ParseStatus.PARTIAL
             _record_error(
                 inbound=inbound,

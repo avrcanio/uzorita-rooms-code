@@ -54,6 +54,7 @@ def validate_booking_export_file(*, filename: str, content: bytes) -> None:
 
 
 XLS_HEADER_ALIASES = {
+    # Croatian (Booking.com HR export)
     "broj rezervacije": "external_id",
     "nositelj rezervacije": "booker_name",
     "ime(na) gosta": "guest_names",
@@ -84,6 +85,36 @@ XLS_HEADER_ALIASES = {
     "datum otkazivanja": "canceled_at",
     "adresa": "booker_address",
     "broj telefona": "booker_phone",
+    # English (Booking.com EN export — same .xls format)
+    "book number": "external_id",
+    "booking number": "external_id",
+    "booked by": "booker_name",
+    "guest name(s)": "guest_names",
+    "guest names": "guest_names",
+    "check-in": "check_in_date",
+    "check-in date": "check_in_date",
+    "check-out": "check_out_date",
+    "check-out date": "check_out_date",
+    "booked on": "booked_at",
+    "rooms": "units_count",
+    "persons": "persons_count",
+    "adults": "adults_count",
+    "children": "children_count",
+    "children's age(s)": "children_ages",
+    "childrens age(s)": "children_ages",
+    "price": "price",
+    "commission %": "commission_percent",
+    "commission amount": "commission_amount",
+    "payment status": "payment_status",
+    "payment method (payment provider)": "payment_provider",
+    "remarks": "notes",
+    "travel purpose": "travel_purpose",
+    "device": "booking_device",
+    "unit type": "room_name",
+    "duration (nights)": "nights_count",
+    "cancellation date": "canceled_at",
+    "address": "booker_address",
+    "phone number": "booker_phone",
 }
 
 
@@ -583,6 +614,7 @@ def upsert_reservation_from_xls_row(row: BookingXlsRow) -> XlsImportResult:
     reservation.booker_phone = row.booker_phone
     reservation.import_source = ImportSource.BOOKING_XLS
     reservation.imported_at = now
+    reservation.details_pending = False
 
     if reservation.status not in (ReservationStatus.CHECKED_IN, ReservationStatus.CHECKED_OUT):
         reservation.status = new_operational_status

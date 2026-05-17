@@ -90,7 +90,34 @@ def _parse_int(value: str | None) -> int | None:
     return int(m.group(0)) if m else None
 
 
-def _parse_booking_number(lines: list[str]) -> str | None:
+_RE_BOOKING_NUMBER = re.compile(r"\b(\d{8,12})\b")
+
+
+def _parse_booking_number_from_subject(subject: str) -> str | None:
+    """Direct Booking.com: 'New booking! (5581435138, Sunday, 28 June 2026)'."""
+    s = (subject or "").strip()
+    if not s:
+        return None
+    m = re.search(r"\((\d{8,12})\s*,", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?i)\bnew\s+booking!\s*\((\d{8,12})\b", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?i)\b(?:modified|cancelled|canceled)\s+booking!\s*\((\d{8,12})\b", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?i)\bcancelled\s+booking!\s*\((\d{8,12})\b", s)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _parse_booking_number(lines: list[str], *, subject: str = "") -> str | None:
+    from_subject = _parse_booking_number_from_subject(subject)
+    if from_subject:
+        return from_subject
+
     # Common variants across Booking templates and forwarded messages.
     for label in ("Booking number", "Confirmation number", "Reservation number"):
         v = _find_value_after_label(lines, label)
@@ -108,15 +135,65 @@ def _parse_booking_number(lines: list[str]) -> str | None:
         m = re.search(r"(?i)\bbooking\.com\s+id:\s*(\d{6,})\b", line)
         if m:
             return m.group(1)
+        m = re.search(r"(?i)booking\s+confirmation\s*[:\-–—]\s*(\d{6,12})\b", line)
+        if m:
+            return m.group(1)
+        m = re.search(r"[?&]res_id=(\d{6,12})\b", line)
+        if m:
+            return m.group(1)
+        m = re.match(r"^\((\d{8,12})\s*,", line.strip())
+        if m:
+            return m.group(1)
+
+    for i, line in enumerate(lines):
+        label = line.strip().lower()
+        if label not in {"booking confirmation", "cancellation"}:
+            continue
+        for j in range(i + 1, min(len(lines), i + 4)):
+            candidate = lines[j].strip()
+            if candidate in {"—", "-", "–", ":"}:
+                continue
+            if re.fullmatch(r"\d{6,12}", candidate):
+                return candidate
+        m = re.search(r"(?i)(?:booking\s+confirmation|cancellation)\s*[:\-–—]\s*(\d{6,12})\b", line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _parse_arrival_from_subject(subject: str) -> date | None:
+    """'(5581435138, Sunday, 28 June 2026)' in subject."""
+    m = re.search(r",\s*([A-Za-z]+,?\s+\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*\)", subject or "")
+    if not m:
+        return None
+    return _parse_booking_date(m.group(1))
+
+
+def _parse_property_name_before_confirmation(lines: list[str]) -> str | None:
+    """Direct Booking.com confirmation: property line sits above 'Booking confirmation'."""
+    for i, line in enumerate(lines):
+        if line.strip().lower() != "booking confirmation":
+            continue
+        if i == 0:
+            break
+        candidate = lines[i - 1].strip()
+        lowered = candidate.lower()
+        if not candidate or len(candidate) < 4:
+            continue
+        if "booking.com" in lowered or "http" in lowered or "security" in lowered:
+            continue
+        if _RE_BOOKING_NUMBER.fullmatch(candidate):
+            continue
+        return candidate
     return None
 
 
 def _parse_booking_date(value: str | None) -> date | None:
     if not value:
         return None
-    value = value.strip()
-    # Examples: "Sat 14 Feb 2026"
-    for fmt in ("%a %d %b %Y", "%A %d %b %Y", "%d %b %Y"):
+    value = value.strip().rstrip(",")
+    # Examples: "Sat 14 Feb 2026", "Sunday, 28 June 2026"
+    for fmt in ("%a %d %b %Y", "%A %d %b %Y", "%A, %d %B %Y", "%d %b %Y", "%d %B %Y"):
         try:
             return datetime.strptime(value, fmt).date()
         except ValueError:
@@ -398,6 +475,18 @@ _SKIP_GUEST_NAME_LINE_MARKERS = (
     "rentlio",
     "reservation has",
     "approximate time",
+    "security precautions",
+    "for security",
+    "check to make sure",
+    "admin.booking.com",
+    "you just received",
+    "kind regards",
+    "pulse,",
+    "booking.com partner",
+    "if the link",
+    "doesn't work",
+    "copy/paste",
+    "you can also",
 )
 
 
@@ -409,6 +498,8 @@ def _looks_like_guest_name_line(line: str) -> bool:
     if any(marker in lowered for marker in _SKIP_GUEST_NAME_LINE_MARKERS):
         return False
     if candidate.startswith("**"):
+        return False
+    if lowered.startswith(("if ", "when ", "you ", "the ", "this ", "receive ", "please ")):
         return False
     if re.search(r"\bR\s*-?\s*\d+\b", candidate, re.I):
         return False
@@ -509,8 +600,10 @@ def _parse_price_line(lines: list[str]) -> tuple[Decimal | None, str | None]:
 
 def _infer_kind(subject: str, lines: list[str]) -> str:
     s = (subject or "").lower()
-    if "nova rezervacija" in s or "new reservation" in s:
+    if "nova rezervacija" in s or "new reservation" in s or "new booking" in s:
         return "new"
+    if "cancelled booking" in s or "canceled booking" in s:
+        return "cancel"
     if "otkaz" in s or "storno" in s:
         return "cancel"
     if "cancel" in s:
@@ -530,7 +623,7 @@ def parse_booking_email(*, subject: str, body_text: str, body_html: str = "") ->
     if _looks_like_html(source):
         source = _html_to_text(source)
     lines = _clean_lines(source)
-    booking_number = _parse_booking_number(lines)
+    booking_number = _parse_booking_number(lines, subject=subject)
     if not booking_number:
         raise BookingParseException(
             "missing_booking_number",
@@ -542,7 +635,7 @@ def parse_booking_email(*, subject: str, body_text: str, body_html: str = "") ->
     guest_nationality_iso2 = None
     check_in = _parse_booking_date(_find_value_after_label(lines, "Check-in"))
     check_out = _parse_booking_date(_find_value_after_label(lines, "Check-out"))
-    property_name = _find_value_after_label(lines, "Property name")
+    property_name = _find_value_after_label(lines, "Property name") or _parse_property_name_before_confirmation(lines)
     room_name = _parse_room_name(lines=lines, subject=subject)
     rooms = _parse_room_blocks(lines)
     total_guests = _parse_int(_find_value_after_label(lines, "Total guests"))
@@ -554,6 +647,8 @@ def parse_booking_email(*, subject: str, body_text: str, body_html: str = "") ->
         range_in, range_out = _parse_date_range_from_text(lines)
         check_in = check_in or range_in
         check_out = check_out or range_out
+    if not check_in:
+        check_in = _parse_arrival_from_subject(subject)
 
     # Try to pull name/country from the line near guest email first (most reliable for Rentlio templates).
     if guest_email and (not guest_full_name or guest_full_name.lower().startswith("font-family")):
@@ -594,20 +689,19 @@ def parse_booking_email(*, subject: str, body_text: str, body_html: str = "") ->
             lowered = line.lower()
             if "font-family" in lowered or "font-size" in lowered or "line-height" in lowered:
                 continue
+            if any(marker in lowered for marker in _SKIP_GUEST_NAME_LINE_MARKERS):
+                continue
+            if "http" in lowered or "www." in lowered:
+                continue
             if "," in line and any(ch.isalpha() for ch in line):
                 before, after = line.split(",", 1)
                 candidate = before.strip()
-                if any(ch.isdigit() for ch in candidate):
+                if not _looks_like_guest_name_line(candidate):
                     continue
-                if re.search(r"(?i)\\bdeluxe\\b", candidate):
-                    continue
-                if ":" in candidate:
-                    continue
-                if 3 <= len(candidate) <= 120 and "booking.com" not in candidate.lower():
-                    guest_full_name = candidate
-                    if not guest_nationality_iso2:
-                        guest_nationality_iso2 = _country_to_iso2(after)
-                    break
+                guest_full_name = candidate
+                if not guest_nationality_iso2:
+                    guest_nationality_iso2 = _country_to_iso2(after)
+                break
 
     kind = _infer_kind(subject, lines)
 

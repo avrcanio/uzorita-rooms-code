@@ -41,6 +41,7 @@ docker exec uzorita-django python manage.py evisitor_probe
 ## Poslovna pravila
 
 - Checkout (`checked_in` → `checked_out`) blokiran dok `evisitor_summary != complete`
+- Pri uspješnoj odjavi rezervacije automatski se poziva `CheckOutTourist` za sve goste sa `evisitor_status=sent`; gosti prelaze na `checked_out`
 - Timeline: sve `checked_in` rezervacije uvijek u listi (i izvan `period_from`/`period_to`)
 
 ## Test u eVisitor UI

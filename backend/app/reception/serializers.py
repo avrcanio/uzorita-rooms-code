@@ -2,6 +2,12 @@ from rest_framework import serializers
 
 from reception.reservation_units import joined_room_names
 
+from reception.evisitor.exceptions import (
+    EvisitorApiError,
+    EvisitorConfigError,
+    EvisitorValidationError,
+)
+from reception.evisitor.service import checkout_reservation_guests_in_evisitor
 from reception.evisitor.summary import evisitor_status_for_guest, evisitor_summary_for_reservation
 
 from .models import EvisitorGuestStatus, Guest, Reservation, ReservationStatus, ReservationUnit
@@ -185,6 +191,32 @@ class ReservationUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Reservation
         fields = ("status",)
+
+    def update(self, instance, validated_data):
+        new_status = validated_data.get("status", instance.status)
+        if (
+            instance.status == ReservationStatus.CHECKED_IN
+            and new_status == ReservationStatus.CHECKED_OUT
+        ):
+            user = None
+            request = self.context.get("request")
+            if request and getattr(request, "user", None) and request.user.is_authenticated:
+                user = request.user
+            try:
+                checkout_reservation_guests_in_evisitor(instance, user=user)
+            except EvisitorValidationError as exc:
+                field_errors = getattr(exc, "field_errors", None) or {}
+                if field_errors:
+                    raise serializers.ValidationError(
+                        {"status": "; ".join(f"{k}: {v}" for k, v in field_errors.items())}
+                    ) from exc
+                raise serializers.ValidationError({"status": str(exc)}) from exc
+            except (EvisitorApiError, EvisitorConfigError) as exc:
+                user_msg = getattr(exc, "user_message", "") or str(exc)
+                raise serializers.ValidationError(
+                    {"status": f"eVisitor odjava nije uspjela: {user_msg}"}
+                ) from exc
+        return super().update(instance, validated_data)
 
     def validate_status(self, value):
         allowed = {choice[0] for choice in ReservationStatus.choices}

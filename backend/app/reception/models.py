@@ -58,6 +58,11 @@ class Reservation(models.Model):
         choices=ImportSource.choices,
         blank=True,
     )
+    details_pending = models.BooleanField(
+        default=False,
+        verbose_name="Čeka detalje (XLS)",
+        help_text="Email stub: samo Booking broj; puni podaci dolaze iz XLS/XML importa.",
+    )
     imported_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -242,6 +247,7 @@ class EvisitorGuestStatus(models.TextChoices):
     NOT_SENT = "not_sent", "Nije poslano"
     PENDING = "pending", "U tijeku"
     SENT = "sent", "Poslano"
+    CHECKED_OUT = "checked_out", "Odjavljeno"
     FAILED = "failed", "Neuspjesno"
 
 

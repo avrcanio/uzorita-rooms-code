@@ -10,7 +10,11 @@ from reception.models import EvisitorGuestStatus, EvisitorSubmission, Guest
 
 from .client import EvisitorClient
 from .exceptions import EvisitorApiError, EvisitorConfigError, EvisitorValidationError
-from .mapper import build_check_in_payload, mask_payload_for_log
+from .mapper import (
+    build_check_in_payload,
+    build_check_out_payload,
+    mask_payload_for_log,
+)
 
 
 def submit_guest_checkin(guest: Guest, *, user=None, force_retry: bool = False) -> EvisitorSubmission:
@@ -100,3 +104,126 @@ def submit_guest_checkin(guest: Guest, *, user=None, force_retry: bool = False) 
         )
 
     return submission
+
+
+def _record_checkout_failure(
+    submission: EvisitorSubmission,
+    guest: Guest,
+    exc: Exception,
+) -> None:
+    user_msg = getattr(exc, "user_message", "") or str(exc)
+    system_msg = getattr(exc, "system_message", "") or ""
+    field_errors = getattr(exc, "field_errors", None)
+    if field_errors:
+        user_msg = "; ".join(f"{k}: {v}" for k, v in field_errors.items())
+
+    submission.status = EvisitorGuestStatus.FAILED
+    submission.error_user_message = user_msg[:2000]
+    submission.error_system_message = system_msg[:2000]
+    submission.response_payload = {"error": user_msg, "system": system_msg}
+    submission.save(
+        update_fields=[
+            "status",
+            "error_user_message",
+            "error_system_message",
+            "response_payload",
+        ]
+    )
+    Guest.objects.filter(pk=guest.pk).update(evisitor_status=EvisitorGuestStatus.FAILED)
+
+
+def submit_guest_checkout(guest: Guest, *, user=None, client: EvisitorClient | None = None) -> EvisitorSubmission:
+    """Odjavi jednog gosta u eVisitoru (CheckOutTourist)."""
+    if not settings.EVISITOR_ENABLED:
+        raise EvisitorConfigError("eVisitor integracija nije uključena.")
+
+    guest = Guest.objects.select_related("reservation").get(pk=guest.pk)
+
+    if guest.evisitor_status == EvisitorGuestStatus.CHECKED_OUT:
+        return (
+            EvisitorSubmission.objects.filter(
+                guest=guest, status=EvisitorGuestStatus.CHECKED_OUT
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+    payload = build_check_out_payload(guest)
+    masked = mask_payload_for_log(payload)
+    registration_id = guest.evisitor_registration_id
+
+    submission = EvisitorSubmission.objects.create(
+        guest=guest,
+        registration_id=registration_id,
+        status=EvisitorGuestStatus.PENDING,
+        submitted_by=user,
+        request_payload=masked,
+    )
+
+    own_client = client is None
+    if own_client:
+        client = EvisitorClient()
+    assert client is not None
+
+    try:
+        if own_client:
+            client.login()
+        client.execute_action("CheckOutTourist", payload)
+    except (EvisitorApiError, EvisitorValidationError, EvisitorConfigError) as exc:
+        _record_checkout_failure(submission, guest, exc)
+        raise
+    finally:
+        if own_client:
+            try:
+                client.logout()
+            finally:
+                client.close()
+
+    now = timezone.now()
+    submission.status = EvisitorGuestStatus.CHECKED_OUT
+    submission.submitted_at = now
+    submission.response_payload = {"ok": True, "action": "CheckOutTourist"}
+    submission.save(update_fields=["status", "submitted_at", "response_payload"])
+
+    Guest.objects.filter(pk=guest.pk).update(
+        evisitor_status=EvisitorGuestStatus.CHECKED_OUT,
+    )
+    return submission
+
+
+def checkout_reservation_guests_in_evisitor(
+    reservation,
+    *,
+    user=None,
+) -> list[EvisitorSubmission]:
+    """
+    Odjavi sve goste rezervacije koji su u eVisitoru prijavljeni (status sent).
+    Poziva se prije spremanja statusa rezervacije na checked_out.
+    """
+    guests = list(
+        Guest.objects.filter(
+            reservation_id=reservation.pk,
+            evisitor_status=EvisitorGuestStatus.SENT,
+        ).select_related("reservation")
+    )
+    if not guests:
+        return []
+
+    if not settings.EVISITOR_ENABLED:
+        Guest.objects.filter(pk__in=[g.pk for g in guests]).update(
+            evisitor_status=EvisitorGuestStatus.CHECKED_OUT,
+        )
+        return []
+
+    submissions: list[EvisitorSubmission] = []
+    client = EvisitorClient()
+    try:
+        client.login()
+        for guest in guests:
+            submissions.append(submit_guest_checkout(guest, user=user, client=client))
+    finally:
+        try:
+            client.logout()
+        finally:
+            client.close()
+    return submissions

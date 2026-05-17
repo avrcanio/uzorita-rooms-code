@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 from typing import Any
 from urllib.parse import urlencode
 
@@ -16,10 +17,24 @@ _PROD_API_MARKER = "eVisitorRhetos_API"
 _TEST_API_MARKER = "testApi"
 
 
+def _evisitor_ssl_context() -> ssl.SSLContext:
+    """eVisitor host još koristi legacy DH parametre; OpenSSL 3 inače baca DH_KEY_TOO_SMALL."""
+    ctx = ssl.create_default_context()
+    try:
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+    except ssl.SSLError:
+        logger.warning("eVisitor SSL: SECLEVEL=1 nije primijenjen", exc_info=True)
+    return ctx
+
+
 class EvisitorClient:
     def __init__(self) -> None:
         self._ensure_config()
-        self._session = httpx.Client(timeout=60.0, follow_redirects=True)
+        self._session = httpx.Client(
+            timeout=60.0,
+            follow_redirects=True,
+            verify=_evisitor_ssl_context(),
+        )
 
     def _ensure_config(self) -> None:
         if not settings.EVISITOR_ENABLED:
@@ -121,8 +136,11 @@ class EvisitorClient:
         psize: int = 50,
         page: int = 1,
         filters: list[dict[str, str]] | None = None,
+        sort: str | None = "Code asc",
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"psize": psize, "page": page}
+        if sort:
+            params["sort"] = sort
         if filters:
             params["filters"] = json.dumps(filters)
         query = urlencode(params)

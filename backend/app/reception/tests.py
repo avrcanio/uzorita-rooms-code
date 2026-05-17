@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -1473,6 +1474,25 @@ class BookingXlsImportTests(TestCase):
         self.assertEqual(units[0].amount, Decimal("79.90"))
         self.assertEqual(units[1].amount, Decimal("79.90"))
 
+    def test_parse_english_header_xls_export(self):
+        """Booking.com EN export uses 'Book number' instead of 'Broj rezervacije'."""
+        from reception.booking_xls_import import XLS_HEADER_ALIASES, _normalize_header
+
+        self.assertEqual(XLS_HEADER_ALIASES.get(_normalize_header("Book number")), "external_id")
+        self.assertEqual(XLS_HEADER_ALIASES.get(_normalize_header("Check-in")), "check_in_date")
+        self.assertEqual(XLS_HEADER_ALIASES.get(_normalize_header("Unit type")), "room_name")
+
+        path = Path("/opt/stacks/uzorita/Reservation 2026-05-17 to 2026-05-18.xls")
+        if not path.is_file():
+            self.skipTest("EN xls fixture not available")
+        rows = parse_booking_xls_bytes(path.read_bytes())
+        self.assertGreaterEqual(len(rows), 1)
+        patricia = next((r for r in rows if r.external_id == "5581435138"), None)
+        self.assertIsNotNone(patricia)
+        self.assertEqual(patricia.check_in_date, date(2026, 6, 28))
+        self.assertEqual(patricia.check_out_date, date(2026, 7, 1))
+        self.assertIn("R3", patricia.room_name)
+
     def test_parse_real_prijava_file_if_present(self):
         path = Path("/opt/stacks/uzorita/Prijava")
         if not path.is_file():
@@ -1670,10 +1690,11 @@ class ReservationDetailApiTests(TestCase):
         response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
         self.assertEqual(response.status_code, 400)
 
-    def test_patch_allows_checked_out_when_evisitor_complete(self):
+    @patch("reception.serializers.checkout_reservation_guests_in_evisitor")
+    def test_patch_allows_checked_out_when_evisitor_complete(self, mock_checkout):
         self.reservation.status = ReservationStatus.CHECKED_IN
         self.reservation.save(update_fields=["status", "updated_at"])
-        Guest.objects.create(
+        guest = Guest.objects.create(
             reservation=self.reservation,
             first_name="Ana",
             last_name="Test",
@@ -1688,6 +1709,87 @@ class ReservationDetailApiTests(TestCase):
         url = f"/api/reception/reservations/{self.reservation.id}/"
         response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
         self.assertEqual(response.status_code, 200)
+        mock_checkout.assert_called_once()
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, ReservationStatus.CHECKED_OUT)
+
+    @override_settings(
+        EVISITOR_ENABLED=True,
+        EVISITOR_ENV="test",
+        EVISITOR_BASE_URL="https://www.evisitor.hr/testApi",
+        EVISITOR_USERNAME="testuser",
+        EVISITOR_PASSWORD="testpass",
+        EVISITOR_API_KEY="testkey",
+        EVISITOR_FACILITY_CODE="0000022",
+    )
+    @patch("reception.evisitor.service.EvisitorClient")
+    def test_patch_checkout_updates_guest_evisitor_status(self, mock_client_cls):
+        self.reservation.check_in_date = date(2026, 5, 15)
+        self.reservation.check_out_date = date(2026, 5, 17)
+        self.reservation.status = ReservationStatus.CHECKED_IN
+        self.reservation.save(update_fields=["status", "check_in_date", "check_out_date", "updated_at"])
+        reg_id = uuid.uuid4()
+        guest = Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Test",
+            is_primary=True,
+            nationality="HR",
+            sex="ženski",
+            date_of_birth=date(1990, 1, 1),
+            document_number="HR123",
+            document_type="osobna",
+            evisitor_status=EvisitorGuestStatus.SENT,
+            evisitor_registration_id=reg_id,
+        )
+        mock_client = mock_client_cls.return_value
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        mock_client.login.assert_called_once()
+        mock_client.execute_action.assert_called_once()
+        self.assertEqual(mock_client.execute_action.call_args[0][0], "CheckOutTourist")
+        guest.refresh_from_db()
+        self.assertEqual(guest.evisitor_status, EvisitorGuestStatus.CHECKED_OUT)
+
+    @override_settings(
+        EVISITOR_ENABLED=True,
+        EVISITOR_ENV="test",
+        EVISITOR_BASE_URL="https://www.evisitor.hr/testApi",
+        EVISITOR_USERNAME="testuser",
+        EVISITOR_PASSWORD="testpass",
+        EVISITOR_API_KEY="testkey",
+        EVISITOR_FACILITY_CODE="0000022",
+    )
+    @patch("reception.evisitor.service.EvisitorClient")
+    def test_patch_checkout_api_error_blocks_reservation_status(self, mock_client_cls):
+        from reception.evisitor.exceptions import EvisitorApiError
+
+        self.reservation.check_in_date = date(2026, 5, 15)
+        self.reservation.check_out_date = date(2026, 5, 17)
+        self.reservation.status = ReservationStatus.CHECKED_IN
+        self.reservation.save(update_fields=["status", "check_in_date", "check_out_date", "updated_at"])
+        Guest.objects.create(
+            reservation=self.reservation,
+            first_name="Ana",
+            last_name="Test",
+            is_primary=True,
+            nationality="HR",
+            sex="ženski",
+            date_of_birth=date(1990, 1, 1),
+            document_number="HR123",
+            document_type="osobna",
+            evisitor_status=EvisitorGuestStatus.SENT,
+            evisitor_registration_id=uuid.uuid4(),
+        )
+        mock_client = mock_client_cls.return_value
+        mock_client.execute_action.side_effect = EvisitorApiError("API greška")
+
+        url = f"/api/reception/reservations/{self.reservation.id}/"
+        response = self.client.patch(url, {"status": ReservationStatus.CHECKED_OUT}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, ReservationStatus.CHECKED_IN)
 
 
 @override_settings(
@@ -1820,6 +1922,20 @@ class EvisitorSummaryTests(TestCase):
             evisitor_status=EvisitorGuestStatus.NOT_SENT,
         )
         self.assertEqual(evisitor_summary_for_reservation(reservation), "incomplete")
+
+    def test_summary_checked_out_when_all_checked_out(self):
+        reservation = Reservation.objects.create(
+            external_id="sum-3",
+            check_in_date=date(2026, 6, 1),
+            check_out_date=date(2026, 6, 3),
+        )
+        Guest.objects.create(
+            reservation=reservation,
+            first_name="A",
+            last_name="B",
+            evisitor_status=EvisitorGuestStatus.CHECKED_OUT,
+        )
+        self.assertEqual(evisitor_summary_for_reservation(reservation), "checked_out")
 
 
 class DocumentScanIngestViewTests(TestCase):

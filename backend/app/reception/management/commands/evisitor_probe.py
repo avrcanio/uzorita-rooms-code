@@ -28,20 +28,27 @@ class Command(BaseCommand):
         try:
             client.login()
             self.stdout.write(self.style.SUCCESS("Login: OK"))
-            countries = client.fetch_records("Country", psize=3)
-            self.stdout.write(f"Country sample: {len(countries)} zapisa")
-            if countries:
-                first = countries[0]
-                self.stdout.write(
-                    f"  primjer: {first.get('CodeTwoLetters')} -> {first.get('CodeThreeLetters')}"
-                )
-            try:
-                doc_types = client.fetch_records("DocumentTypeLookup", psize=5)
-                self.stdout.write(f"DocumentTypeLookup: {len(doc_types)} zapisa")
-            except EvisitorApiError as exc:
-                self.stdout.write(
-                    self.style.WARNING(f"DocumentTypeLookup preskočen: {exc}")
-                )
+            for resource, sort in (
+                ("Country", "NameNational asc"),
+                ("DocumentTypeLookup", "Code asc"),
+                ("FacilityBrowse", "Code asc"),
+                ("ArrivalOrganisationLookup", "CodeMI asc"),
+            ):
+                try:
+                    records = client.fetch_records(resource, psize=5, sort=sort)
+                    self.stdout.write(f"{resource}: {len(records)} zapisa")
+                    if resource == "FacilityBrowse" and records:
+                        for row in records[:5]:
+                            self.stdout.write(
+                                f"  {row.get('Code')} — {row.get('Name') or row.get('FacilityName') or '-'}"
+                            )
+                    elif resource == "Country" and records:
+                        first = records[0]
+                        self.stdout.write(
+                            f"  primjer: {first.get('CodeTwoLetters')} -> {first.get('CodeThreeLetters')}"
+                        )
+                except EvisitorApiError as exc:
+                    self.stdout.write(self.style.WARNING(f"{resource} preskočen: {exc}"))
         except (EvisitorConfigError, EvisitorApiError) as exc:
             raise CommandError(str(exc)) from exc
         finally:

@@ -4,8 +4,9 @@ import uuid
 from datetime import date
 
 from django.conf import settings
+from django.utils import timezone
 
-from reception.models import Guest, Reservation
+from reception.models import EvisitorGuestStatus, Guest, Reservation
 
 from .exceptions import EvisitorValidationError
 from .lookups import iso2_to_iso3, map_document_type_code
@@ -122,6 +123,56 @@ def build_check_in_payload(
         "TTPaymentCategory": settings.EVISITOR_DEFAULT_PAYMENT_CATEGORY,
         "TouristEmail": (guest.email or "").strip(),
         "TouristTelephone": "",
+    }
+
+
+def build_check_out_payload(
+    guest: Guest,
+    *,
+    checkout_date: date | None = None,
+) -> dict:
+    reservation: Reservation = guest.reservation
+    errors: dict[str, str] = {}
+
+    registration_id = guest.evisitor_registration_id
+    if not registration_id:
+        errors["evisitor_registration_id"] = "Nedostaje ID eVisitor prijave."
+
+    status = (guest.evisitor_status or "").strip()
+    if status == EvisitorGuestStatus.CHECKED_OUT:
+        errors["evisitor_status"] = "Gost je već odjavljen u eVisitoru."
+    elif status != EvisitorGuestStatus.SENT:
+        errors["evisitor_status"] = "Gost nije prijavljen u eVisitoru."
+
+    today = timezone.localdate()
+    check_in = reservation.check_in_date
+    check_out = reservation.check_out_date
+
+    if checkout_date is not None:
+        co_date = checkout_date
+    elif check_out and check_out <= today:
+        co_date = check_out
+    else:
+        co_date = today
+
+    if co_date > today:
+        co_date = today
+    if check_in and co_date < check_in:
+        if check_in <= today:
+            co_date = check_in
+        else:
+            errors["checkout_date"] = "Datum odjave ne može biti prije datuma dolaska."
+
+    if errors:
+        raise EvisitorValidationError(
+            "Podaci nisu potpuni za eVisitor odjavu.",
+            field_errors=errors,
+        )
+
+    return {
+        "ID": str(registration_id),
+        "CheckOutDate": _format_yyyymmdd(co_date),
+        "CheckOutTime": settings.EVISITOR_DEFAULT_STAY_TIME_UNTIL,
     }
 
 

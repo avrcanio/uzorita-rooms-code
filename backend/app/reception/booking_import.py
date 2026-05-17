@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
+from django.utils import timezone
 
 from reception.models import Guest, ImportSource, Reservation, ReservationStatus
 from reception.reservation_units import sync_reservation_units
@@ -132,3 +133,77 @@ def status_from_booking_kind(kind: str) -> str:
     if kind == "cancel":
         return ReservationStatus.CANCELED
     return ReservationStatus.EXPECTED
+
+
+def _placeholder_stay_dates(
+    *,
+    check_in_date: date | None,
+    check_out_date: date | None,
+) -> tuple[date, date]:
+    """Minimal valid range until XLS/XML import fills real dates."""
+    if check_in_date:
+        check_out = check_out_date or (check_in_date + timedelta(days=1))
+        if check_out <= check_in_date:
+            check_out = check_in_date + timedelta(days=1)
+        return (check_in_date, check_out)
+    today = timezone.localdate()
+    return (today, today + timedelta(days=1))
+
+
+@transaction.atomic
+def upsert_booking_email_stub(
+    *,
+    external_id: str,
+    check_in_date: date | None = None,
+    check_out_date: date | None = None,
+    status: str | None = None,
+    booker_name: str | None = None,
+) -> ImportResult:
+    """
+    Create or refresh a reservation that only has a Booking number (and optional check-in).
+    Full details are applied later via XLS/XML import.
+    """
+    check_in, check_out = _placeholder_stay_dates(
+        check_in_date=check_in_date,
+        check_out_date=check_out_date,
+    )
+    operational_status = status or ReservationStatus.EXPECTED
+
+    reservation, created = Reservation.objects.get_or_create(
+        external_id=external_id,
+        defaults={
+            "check_in_date": check_in,
+            "check_out_date": check_out,
+            "status": operational_status,
+            "details_pending": True,
+            "import_source": ImportSource.BOOKING_EMAIL,
+        },
+    )
+
+    if not created and not reservation.details_pending:
+        return ImportResult(reservation_id=reservation.id, primary_guest_id=None)
+
+    changed = created
+    if reservation.details_pending != True:
+        reservation.details_pending = True
+        changed = True
+    if check_in_date and reservation.check_in_date != check_in:
+        reservation.check_in_date = check_in
+        changed = True
+    if check_out_date and reservation.check_out_date != check_out:
+        reservation.check_out_date = check_out
+        changed = True
+    if reservation.status != operational_status:
+        if reservation.status not in (ReservationStatus.CHECKED_IN, ReservationStatus.CHECKED_OUT):
+            reservation.status = operational_status
+            changed = True
+    if booker_name and reservation.booker_name != booker_name:
+        reservation.booker_name = booker_name
+        changed = True
+    if reservation.import_source != ImportSource.BOOKING_EMAIL:
+        reservation.import_source = ImportSource.BOOKING_EMAIL
+        changed = True
+    if changed:
+        reservation.save()
+
+    return ImportResult(reservation_id=reservation.id, primary_guest_id=None)

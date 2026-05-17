@@ -63,6 +63,7 @@ def blocked_date_ranges_for_feed(
         ReservationUnit.objects.filter(room_id__in=room_ids)
         .exclude(reservation__status=ReservationStatus.CANCELED)
         .exclude(reservation__import_source__in=BOOKING_IMPORT_SOURCES)
+        .exclude(reservation__details_pending=True)
         .filter(
             reservation__check_in_date__lt=range_end,
             reservation__check_out_date__gt=range_start,

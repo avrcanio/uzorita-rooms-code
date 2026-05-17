@@ -12,7 +12,12 @@ def evisitor_summary_for_guests(guests) -> str:
     guest_list = list(guests)
     if not guest_list:
         return "none"
-    if all(evisitor_status_for_guest(g) == EvisitorGuestStatus.SENT for g in guest_list):
+    statuses = [evisitor_status_for_guest(g) for g in guest_list]
+    if all(s == EvisitorGuestStatus.CHECKED_OUT for s in statuses):
+        return "checked_out"
+    if all(s in (EvisitorGuestStatus.SENT, EvisitorGuestStatus.CHECKED_OUT) for s in statuses):
+        return "complete"
+    if all(s == EvisitorGuestStatus.SENT for s in statuses):
         return "complete"
     return "incomplete"
 

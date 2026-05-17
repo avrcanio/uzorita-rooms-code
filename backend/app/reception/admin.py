@@ -70,6 +70,7 @@ class ReservationAdmin(admin.ModelAdmin):
         "currency",
         "total_amount",
         "import_source",
+        "details_pending",
     )
     list_filter = ("status", "booking_status", "import_source", "currency", "check_in_date")
     search_fields = ("external_id", "booker_name", "booker_phone", "units__room_name")
