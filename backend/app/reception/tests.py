@@ -2237,3 +2237,117 @@ class RoomCalendarViewTests(TestCase):
         ids = {row["id"] for row in response.data}
         self.assertIn(self.reservation_active.id, ids)
         self.assertIn(self.reservation_canceled.id, ids)
+
+
+class ReceptionMonthlyStatisticsTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("stats_user", password="test-pass-123")
+        self.client = APIClient()
+        self.client.force_login(self.user)
+
+    def _create(
+        self,
+        external_id: str,
+        check_in: date,
+        check_out: date,
+        *,
+        status: str = ReservationStatus.CHECKED_IN,
+        total_amount: Decimal | None = None,
+        commission_amount: Decimal | None = None,
+        nights_count: int | None = None,
+    ) -> Reservation:
+        return Reservation.objects.create(
+            external_id=external_id,
+            check_in_date=check_in,
+            check_out_date=check_out,
+            status=status,
+            total_amount=total_amount,
+            commission_amount=commission_amount,
+            nights_count=nights_count,
+        )
+
+    def test_aggregate_includes_checked_in_and_out_excludes_expected_canceled(self):
+        self._create(
+            "stats-in-1",
+            date(2026, 3, 10),
+            date(2026, 3, 12),
+            status=ReservationStatus.CHECKED_IN,
+            total_amount=Decimal("100.00"),
+            commission_amount=Decimal("15.00"),
+            nights_count=2,
+        )
+        self._create(
+            "stats-out-1",
+            date(2026, 3, 20),
+            date(2026, 3, 22),
+            status=ReservationStatus.CHECKED_OUT,
+            total_amount=Decimal("200.00"),
+            commission_amount=Decimal("20.00"),
+            nights_count=2,
+        )
+        self._create(
+            "stats-prev-1",
+            date(2025, 3, 15),
+            date(2025, 3, 17),
+            status=ReservationStatus.CHECKED_OUT,
+            total_amount=Decimal("50.00"),
+            commission_amount=Decimal("5.00"),
+            nights_count=2,
+        )
+        self._create(
+            "stats-expected",
+            date(2026, 3, 5),
+            date(2026, 3, 7),
+            status=ReservationStatus.EXPECTED,
+            total_amount=Decimal("999.00"),
+        )
+        self._create(
+            "stats-canceled",
+            date(2026, 3, 6),
+            date(2026, 3, 8),
+            status=ReservationStatus.CANCELED,
+            total_amount=Decimal("888.00"),
+        )
+
+        data = aggregate_monthly_statistics(2026)
+        march_current = data["months"][2]["current"]
+        march_previous = data["months"][2]["previous"]
+
+        self.assertEqual(march_current["revenue"], "300.00")
+        self.assertEqual(march_current["commission"], "35.00")
+        self.assertEqual(march_current["nights"], 4)
+        self.assertEqual(march_previous["revenue"], "50.00")
+        self.assertEqual(march_previous["commission"], "5.00")
+        self.assertEqual(march_previous["nights"], 2)
+
+    def test_nights_fallback_from_dates_when_count_missing(self):
+        self._create(
+            "stats-nights-fallback",
+            date(2026, 4, 1),
+            date(2026, 4, 4),
+            status=ReservationStatus.CHECKED_IN,
+            total_amount=Decimal("10.00"),
+            nights_count=None,
+        )
+        data = aggregate_monthly_statistics(2026)
+        april = data["months"][3]["current"]
+        self.assertEqual(april["nights"], 3)
+
+    def test_api_endpoint_returns_monthly_payload(self):
+        self._create(
+            "stats-api-1",
+            date(2026, 5, 1),
+            date(2026, 5, 2),
+            status=ReservationStatus.CHECKED_IN,
+            total_amount=Decimal("75.50"),
+            commission_amount=Decimal("7.50"),
+            nights_count=1,
+        )
+        resp = self.client.get("/api/reception/statistics/monthly/", {"year": "2026"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["year"], 2026)
+        self.assertEqual(resp.data["comparison_year"], 2025)
+        may = resp.data["months"][4]["current"]
+        self.assertEqual(may["revenue"], "75.50")
+        self.assertEqual(may["commission"], "7.50")
+        self.assertEqual(may["nights"], 1)
