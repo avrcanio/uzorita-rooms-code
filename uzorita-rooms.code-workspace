@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "name": "uzorita-rooms-code",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "git.enabled": true,
+    "git.autoRepositoryDetection": false,
+    "git.openRepositoryInParentFolders": "never",
+    "git.ignoreSubmodules": true
+  }
+}
