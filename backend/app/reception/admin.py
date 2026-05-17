@@ -2,7 +2,15 @@ from django.contrib import admin, messages
 
 from reception.reservation_units import joined_room_names
 
-from .models import BookingIcalFeed, DocumentScanLog, Guest, IDDocument, Reservation, ReservationUnit
+from .models import (
+    BookingIcalFeed,
+    DocumentScanLog,
+    EvisitorSubmission,
+    Guest,
+    IDDocument,
+    Reservation,
+    ReservationUnit,
+)
 
 
 class ReservationUnitInline(admin.TabularInline):
@@ -26,11 +34,12 @@ class GuestInline(admin.TabularInline):
         "is_primary",
         "nationality",
         "document_number",
+        "evisitor_status",
         "mrz_verified",
         "date_of_expiry",
         "address_preview",
     )
-    readonly_fields = ("id", "address_preview")
+    readonly_fields = ("id", "evisitor_status", "address_preview")
 
     @admin.display(description="Adresa")
     def address_preview(self, obj: Guest) -> str:
@@ -79,6 +88,38 @@ class ReservationAdmin(admin.ModelAdmin):
         return label or "—"
 
 
+@admin.register(EvisitorSubmission)
+class EvisitorSubmissionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "guest",
+        "status",
+        "registration_id",
+        "submitted_at",
+        "submitted_by",
+        "created_at",
+    )
+    list_filter = ("status", "created_at")
+    search_fields = (
+        "guest__first_name",
+        "guest__last_name",
+        "guest__reservation__external_id",
+        "error_user_message",
+    )
+    readonly_fields = (
+        "guest",
+        "registration_id",
+        "status",
+        "submitted_at",
+        "submitted_by",
+        "error_user_message",
+        "error_system_message",
+        "request_payload",
+        "response_payload",
+        "created_at",
+    )
+
+
 @admin.register(Guest)
 class GuestAdmin(admin.ModelAdmin):
     list_display = (
@@ -88,6 +129,7 @@ class GuestAdmin(admin.ModelAdmin):
         "last_name",
         "email",
         "is_primary",
+        "evisitor_status",
         "nationality",
         "document_number",
         "personal_id_number",

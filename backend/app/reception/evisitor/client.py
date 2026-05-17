@@ -34,6 +34,15 @@ class EvisitorClient:
             raise EvisitorConfigError(
                 "EVISITOR_ENV=test ali BASE_URL izgleda kao produkcija. Koristite testApi URL."
             )
+        if env == "prod":
+            if _TEST_API_MARKER in base:
+                raise EvisitorConfigError(
+                    "EVISITOR_ENV=prod ali BASE_URL je testApi. Koristite produkcijski API URL."
+                )
+            if _PROD_API_MARKER not in base:
+                raise EvisitorConfigError(
+                    "EVISITOR_ENV=prod ali BASE_URL ne sadrži eVisitorRhetos_API."
+                )
         if env == "test" and not settings.EVISITOR_API_KEY:
             raise EvisitorConfigError("EVISITOR_API_KEY je obavezan na testnoj okolini.")
 

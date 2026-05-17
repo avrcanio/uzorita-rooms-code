@@ -57,7 +57,38 @@ def iso2_to_iso3(iso2: str) -> str:
     if mapped:
         return mapped
     # Fallback for common codes when API unavailable (e.g. tests).
-    fallbacks = {"HR": "HRV", "DE": "DEU", "IT": "ITA", "AT": "AUT", "SI": "SVN"}
+    fallbacks = {
+        "HR": "HRV",
+        "DE": "DEU",
+        "IT": "ITA",
+        "AT": "AUT",
+        "SI": "SVN",
+        "BE": "BEL",
+        "FR": "FRA",
+        "NL": "NLD",
+        "GB": "GBR",
+        "US": "USA",
+        "CH": "CHE",
+        "PL": "POL",
+        "CZ": "CZE",
+        "SK": "SVK",
+        "HU": "HUN",
+        "RS": "SRB",
+        "BA": "BIH",
+        "ME": "MNE",
+        "MK": "MKD",
+        "AL": "ALB",
+        "GR": "GRC",
+        "ES": "ESP",
+        "PT": "PRT",
+        "SE": "SWE",
+        "NO": "NOR",
+        "DK": "DNK",
+        "FI": "FIN",
+        "IE": "IRL",
+        "LU": "LUX",
+        "IN": "IND",
+    }
     return fallbacks.get(code, "")
 
 
